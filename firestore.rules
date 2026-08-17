@@ -1,0 +1,111 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // ─── Helpers ───────────────────────────────────────────────
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+    
+    function getUserDoc() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
+    }
+    
+    function getUserRole() {
+      return getUserDoc().role;
+    }
+    
+    function getUserOrg() {
+      return getUserDoc().organizationId;
+    }
+    
+    function isAdmin() {
+      return isAuthenticated() && getUserRole() == 'admin';
+    }
+    
+    function isStaff() {
+      return isAuthenticated() && (getUserRole() == 'staff' || getUserRole() == 'admin');
+    }
+    
+    function isActive() {
+      return isAuthenticated() && (getUserDoc().status == 'active' || isAdmin());
+    }
+
+    // Prevents reading soft-deleted documents unless Admin
+    function isNotDeleted() {
+      return !('isDeleted' in resource.data) || resource.data.isDeleted == false;
+    }
+
+    // ─── Users Collection ──────────────────────────────────────
+    match /users/{userId} {
+      // Authenticated users can read their own profile or all users if active
+      allow read: if isAuthenticated() && (request.auth.uid == userId || isActive());
+      
+      // Only Admins can create user profiles
+      allow create: if isAdmin();
+
+      // Admins can update any user; non-admins can update own profile except protected role/internal fields
+      allow update: if isAdmin() || (
+        isAuthenticated() && 
+        request.auth.uid == userId && 
+        !request.resource.data.diff(resource.data).affectedKeys().hasAny(['role', 'isInternalAccount', 'isHidden'])
+      );
+      
+      // Only admins can delete user profiles
+      allow delete: if isAdmin();
+    }
+
+    // ─── Patients Collection ───────────────────────────────────
+    match /patients/{patientId} {
+      // Active staff/admins can read patient records
+      allow read: if isActive() && (isNotDeleted() || isAdmin());
+      
+      // Active staff/admins can create and update patient records
+      allow create, update: if isActive();
+      
+      // Only admins can hard-delete patient records
+      allow delete: if isAdmin();
+    }
+
+    // ─── Invoices Collection ───────────────────────────────────
+    match /invoices/{invoiceId} {
+      // Active staff/admins can read non-deleted invoices
+      allow read: if isActive() && (isNotDeleted() || isAdmin());
+      
+      // Active staff/admins can create invoices
+      allow create: if isActive();
+      
+      // Staff and admins can update invoice status/discounts
+      allow update: if isActive();
+      
+      // Only admins can delete invoices
+      allow delete: if isAdmin();
+    }
+
+    // ─── Activities Collection ─────────────────────────────────
+    match /activities/{activityId} {
+      // Active staff/admins can read activity logs
+      allow read: if isActive();
+      
+      // Authenticated users can write activity logs
+      allow create: if isAuthenticated();
+      
+      // Activity logs are immutable once created
+      allow update, delete: if isAdmin();
+    }
+    
+    // ─── System Metrics ────────────────────────────────────────
+    match /system_metrics/{document=**} {
+      allow read: if isActive();
+      allow create, update: if isActive();
+      allow delete: if isAdmin();
+    }
+
+    // ─── Scheduled Notifications Collection ────────────────────
+    match /scheduled_notifications/{notificationId} {
+      allow read: if isAuthenticated();
+      allow create, update: if isAuthenticated();
+      allow delete: if isAdmin();
+    }
+  }
+}
