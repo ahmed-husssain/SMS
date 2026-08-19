@@ -44,9 +44,10 @@ class _RecordsPageState extends ConsumerState<RecordsPage> {
     final profile = ref.watch(userProfileProvider).value;
     final role = profile?['role'] ?? 'staff';
 
-    // Admin gets all patients, staff gets only their assigned patients
+    // Admin gets all patients (including deleted when in archived view), staff gets only their assigned patients
+    final includeDeleted = role == 'admin' && _statusFilter == 'archived';
     final patientsAsync = role == 'admin'
-        ? ref.watch(allPatientsProvider(false))
+        ? ref.watch(allPatientsProvider(includeDeleted))
         : ref.watch(staffPatientsProvider);
 
     return Scaffold(
@@ -158,7 +159,16 @@ class _RecordsPageState extends ConsumerState<RecordsPage> {
                   const SizedBox(width: 8),
                   _buildFilterChip('Discontinued', 'discontinued'),
                   const SizedBox(width: 8),
-                  _buildFilterChip('All Records', 'all'),
+                  _buildFilterChip('All Active', 'all'),
+                  if (role == 'admin') ...[
+                    const SizedBox(width: 8),
+                    _buildFilterChip(
+                      'Deleted / Archived',
+                      'archived',
+                      icon: Icons.delete_outline_rounded,
+                      customColor: Colors.red.shade700,
+                    ),
+                  ],
                 ],
               ),
             ),
@@ -168,33 +178,30 @@ class _RecordsPageState extends ConsumerState<RecordsPage> {
             Expanded(
               child: patientsAsync.when(
                 data: (patients) {
-                  if (patients.isEmpty) {
-                    return Center(
-                      child: Text(
-                        role == 'admin'
-                            ? 'No patients registered yet.'
-                            : 'No patients assigned to you yet.',
-                      ),
-                    );
-                  }
-
-                  // Instant In-Memory Filter
+                  final isArchivedView = _statusFilter == 'archived';
                   final query = _searchQuery.trim().toLowerCase();
                   final isSearchingDiscontinued = query.contains('discontinue') || query.contains('discontinued');
                   final isSearchingActive = query == 'active';
 
                   final filteredPatients = patients.where((p) {
-                    if (isSearchingDiscontinued) {
-                      if (!p.isDiscontinued) return false;
-                    } else if (isSearchingActive) {
-                      if (p.isDiscontinued) return false;
-                    } else if (_statusFilter == 'active') {
-                      if (p.isDiscontinued) return false;
-                    } else if (_statusFilter == 'discontinued') {
-                      if (!p.isDiscontinued) return false;
+                    if (isArchivedView) {
+                      if (!p.isDeleted) return false;
+                    } else {
+                      if (p.isDeleted) return false;
+                      if (isSearchingDiscontinued) {
+                        if (!p.isDiscontinued) return false;
+                      } else if (isSearchingActive) {
+                        if (p.isDiscontinued) return false;
+                      } else if (_statusFilter == 'active') {
+                        if (p.isDiscontinued) return false;
+                      } else if (_statusFilter == 'discontinued') {
+                        if (!p.isDiscontinued) return false;
+                      }
                     }
 
-                    if (query.isEmpty || isSearchingDiscontinued || isSearchingActive) return true;
+                    if (query.isEmpty || (!isArchivedView && (isSearchingDiscontinued || isSearchingActive))) {
+                      return true;
+                    }
 
                     final mr = p.mrNumber.toLowerCase();
                     final name = p.patientName.toLowerCase();
@@ -232,25 +239,39 @@ class _RecordsPageState extends ConsumerState<RecordsPage> {
                                   child: Column(
                                     mainAxisAlignment: MainAxisAlignment.center,
                                     children: [
-                                      Icon(Icons.search_off_rounded, size: 48, color: Colors.grey.shade400),
+                                      Icon(
+                                        isArchivedView ? Icons.archive_outlined : Icons.search_off_rounded,
+                                        size: 48,
+                                        color: Colors.grey.shade400,
+                                      ),
                                       const SizedBox(height: 12),
                                       Text(
-                                        'No patients found matching "$_searchQuery"',
+                                        isArchivedView
+                                            ? (_searchQuery.isNotEmpty
+                                                ? 'No archived patients matching "$_searchQuery"'
+                                                : 'No deleted / archived patients found.')
+                                            : (_searchQuery.isNotEmpty
+                                                ? 'No patients found matching "$_searchQuery"'
+                                                : (role == 'admin'
+                                                    ? 'No patients registered yet.'
+                                                    : 'No patients assigned to you yet.')),
                                         style: TextStyle(
                                           fontSize: 14,
                                           fontWeight: FontWeight.bold,
                                           color: Colors.grey.shade600,
                                         ),
                                       ),
-                                      const SizedBox(height: 8),
-                                      TextButton.icon(
-                                        onPressed: () {
-                                          _searchController.clear();
-                                          setState(() => _searchQuery = '');
-                                        },
-                                        icon: const Icon(Icons.clear, size: 16),
-                                        label: const Text('Clear Search'),
-                                      ),
+                                      if (_searchQuery.isNotEmpty) ...[
+                                        const SizedBox(height: 8),
+                                        TextButton.icon(
+                                          onPressed: () {
+                                            _searchController.clear();
+                                            setState(() => _searchQuery = '');
+                                          },
+                                          icon: const Icon(Icons.clear, size: 16),
+                                          label: const Text('Clear Search'),
+                                        ),
+                                      ],
                                     ],
                                   ),
                                 ),
@@ -276,7 +297,7 @@ class _RecordsPageState extends ConsumerState<RecordsPage> {
                                         vertical: 14,
                                       ),
                                       decoration: BoxDecoration(
-                                        color: Colors.grey.shade50,
+                                        color: isArchivedView ? Colors.red.shade50 : Colors.grey.shade50,
                                         borderRadius: const BorderRadius.only(
                                           topLeft: Radius.circular(12),
                                           topRight: Radius.circular(12),
@@ -291,7 +312,7 @@ class _RecordsPageState extends ConsumerState<RecordsPage> {
                                               style: TextStyle(
                                                 fontSize: 11,
                                                 fontWeight: FontWeight.w600,
-                                                color: Colors.grey.shade500,
+                                                color: isArchivedView ? Colors.red.shade700 : Colors.grey.shade500,
                                                 letterSpacing: 0.5,
                                               ),
                                             ),
@@ -304,7 +325,7 @@ class _RecordsPageState extends ConsumerState<RecordsPage> {
                                               style: TextStyle(
                                                 fontSize: 11,
                                                 fontWeight: FontWeight.w600,
-                                                color: Colors.grey.shade500,
+                                                color: isArchivedView ? Colors.red.shade700 : Colors.grey.shade500,
                                                 letterSpacing: 0.5,
                                               ),
                                             ),
@@ -313,11 +334,11 @@ class _RecordsPageState extends ConsumerState<RecordsPage> {
                                           Expanded(
                                             flex: 3,
                                             child: Text(
-                                              'NET PROFIT',
+                                              isArchivedView ? 'ACTION' : 'NET PROFIT',
                                               style: TextStyle(
                                                 fontSize: 11,
                                                 fontWeight: FontWeight.w600,
-                                                color: Colors.grey.shade500,
+                                                color: isArchivedView ? Colors.red.shade700 : Colors.grey.shade500,
                                                 letterSpacing: 0.5,
                                               ),
                                               textAlign: TextAlign.right,
@@ -336,7 +357,7 @@ class _RecordsPageState extends ConsumerState<RecordsPage> {
                                       child: ListView.separated(
                                         controller: _scrollController,
                                         itemCount: filteredPatients.length,
-                                        separatorBuilder: (_, __) => const Divider(
+                                        separatorBuilder: (_, index) => const Divider(
                                           height: 1,
                                           thickness: 1,
                                           color: Color(0xFFF5F5F5),
@@ -359,8 +380,10 @@ class _RecordsPageState extends ConsumerState<RecordsPage> {
                                                       alignment: Alignment.centerLeft,
                                                       child: Text(
                                                         p.mrNumber,
-                                                        style: const TextStyle(
-                                                          color: Color(0xFF1565C0),
+                                                        style: TextStyle(
+                                                          color: p.isDeleted
+                                                              ? Colors.red.shade700
+                                                              : const Color(0xFF1565C0),
                                                           fontWeight: FontWeight.bold,
                                                           fontSize: 13,
                                                         ),
@@ -383,10 +406,31 @@ class _RecordsPageState extends ConsumerState<RecordsPage> {
                                                               style: TextStyle(
                                                                 fontWeight: FontWeight.bold,
                                                                 fontSize: 13,
-                                                                color: p.isDiscontinued ? Colors.grey.shade700 : Colors.black87,
+                                                                color: p.isDeleted
+                                                                    ? Colors.grey.shade800
+                                                                    : (p.isDiscontinued
+                                                                        ? Colors.grey.shade700
+                                                                        : Colors.black87),
                                                               ),
                                                             ),
-                                                            if (p.isDiscontinued)
+                                                            if (p.isDeleted)
+                                                              Container(
+                                                                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                                                decoration: BoxDecoration(
+                                                                  color: Colors.red.shade100,
+                                                                  borderRadius: BorderRadius.circular(4),
+                                                                  border: Border.all(color: Colors.red.shade400),
+                                                                ),
+                                                                child: Text(
+                                                                  'DELETED',
+                                                                  style: TextStyle(
+                                                                    fontSize: 9,
+                                                                    fontWeight: FontWeight.bold,
+                                                                    color: Colors.red.shade900,
+                                                                  ),
+                                                                ),
+                                                              )
+                                                            else if (p.isDiscontinued)
                                                               Container(
                                                                 padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                                                                 decoration: BoxDecoration(
@@ -423,19 +467,40 @@ class _RecordsPageState extends ConsumerState<RecordsPage> {
                                                   const SizedBox(width: 12),
                                                   Expanded(
                                                     flex: 3,
-                                                    child: FittedBox(
-                                                      fit: BoxFit.scaleDown,
-                                                      alignment: Alignment.centerRight,
-                                                      child: Text(
-                                                        'Rs. ${NumberFormat('#,###').format(p.profit.toInt())}',
-                                                        style: const TextStyle(
-                                                          fontWeight: FontWeight.bold,
-                                                          fontSize: 13,
-                                                          color: Color(0xFFE53935),
-                                                        ),
-                                                        textAlign: TextAlign.right,
-                                                      ),
-                                                    ),
+                                                    child: p.isDeleted
+                                                        ? Align(
+                                                            alignment: Alignment.centerRight,
+                                                            child: ElevatedButton.icon(
+                                                              style: ElevatedButton.styleFrom(
+                                                                backgroundColor: Colors.green.shade700,
+                                                                foregroundColor: Colors.white,
+                                                                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                                                                shape: RoundedRectangleBorder(
+                                                                  borderRadius: BorderRadius.circular(6),
+                                                                ),
+                                                                visualDensity: VisualDensity.compact,
+                                                              ),
+                                                              icon: const Icon(Icons.restore_from_trash_rounded, size: 14),
+                                                              label: const Text(
+                                                                'Restore',
+                                                                style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold),
+                                                              ),
+                                                              onPressed: () => _confirmAndRestorePatient(context, p),
+                                                            ),
+                                                          )
+                                                        : FittedBox(
+                                                            fit: BoxFit.scaleDown,
+                                                            alignment: Alignment.centerRight,
+                                                            child: Text(
+                                                              'Rs. ${NumberFormat('#,###').format(p.profit.toInt())}',
+                                                              style: const TextStyle(
+                                                                fontWeight: FontWeight.bold,
+                                                                fontSize: 13,
+                                                                color: Color(0xFFE53935),
+                                                              ),
+                                                              textAlign: TextAlign.right,
+                                                            ),
+                                                          ),
                                                   ),
                                                 ],
                                               ),
@@ -461,31 +526,104 @@ class _RecordsPageState extends ConsumerState<RecordsPage> {
     );
   }
 
-  Widget _buildFilterChip(String label, String value) {
+  Widget _buildFilterChip(String label, String value, {IconData? icon, Color? customColor}) {
     final isSelected = _statusFilter == value;
+    final activeColor = customColor ?? const Color(0xFF1565C0);
     return ChoiceChip(
+      avatar: icon != null
+          ? Icon(
+              icon,
+              size: 16,
+              color: isSelected ? Colors.white : activeColor,
+            )
+          : null,
       label: Text(
         label,
         style: TextStyle(
           fontSize: 12,
           fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
-          color: isSelected ? Colors.white : const Color(0xFF1565C0),
+          color: isSelected ? Colors.white : activeColor,
         ),
       ),
       selected: isSelected,
-      selectedColor: const Color(0xFF1565C0),
+      selectedColor: activeColor,
       backgroundColor: Colors.white,
       side: BorderSide(
-        color: isSelected ? const Color(0xFF1565C0) : Colors.grey.shade300,
+        color: isSelected ? activeColor : Colors.grey.shade300,
       ),
       onSelected: (selected) {
         if (selected) {
           setState(() {
             _statusFilter = value;
           });
+          _scrollToTop();
         }
       },
     );
+  }
+
+  Future<void> _confirmAndRestorePatient(BuildContext context, Patient patient) async {
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Row(
+          children: [
+            Icon(Icons.restore_from_trash_rounded, color: Colors.green.shade700),
+            const SizedBox(width: 8),
+            const Text('Restore Patient?'),
+          ],
+        ),
+        content: Text(
+          'Are you sure you want to restore ${patient.patientName} and all linked invoices?\n\nThis will return the patient and invoices to active lists and financial calculations.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton.icon(
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.green.shade700,
+              foregroundColor: Colors.white,
+            ),
+            onPressed: () => Navigator.pop(ctx, true),
+            icon: const Icon(Icons.restore_rounded, size: 16),
+            label: const Text('Restore', style: TextStyle(fontWeight: FontWeight.bold)),
+          ),
+        ],
+      ),
+    );
+
+    if (confirm == true) {
+      final user = ref.read(authStateProvider).value;
+      try {
+        await ref.read(patientRepositoryProvider).restorePatient(
+              patientId: patient.patientId,
+              patientName: patient.patientName,
+              userId: user?.uid ?? 'Admin',
+              organizationId: patient.organizationId,
+            );
+        if (context.mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('✓ Patient "${patient.patientName}" and linked invoices restored successfully'),
+              backgroundColor: Colors.green.shade700,
+              behavior: SnackBarBehavior.floating,
+            ),
+          );
+        }
+      } catch (e) {
+        if (context.mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Failed to restore patient: $e'),
+              backgroundColor: Colors.red.shade700,
+              behavior: SnackBarBehavior.floating,
+            ),
+          );
+        }
+      }
+    }
   }
 
   void _showPatientDetails(BuildContext context, Patient p, String role) {
@@ -570,182 +708,288 @@ class _PatientDetailsModal extends ConsumerWidget {
               ),
               Row(
                 children: [
-                  _ActionIconButton(
-                    icon: Icons.manage_search_rounded,
-                    color: const Color(0xFF004B93),
-                    tooltip: 'Search Invoices',
-                    onPressed: () {
-                      ref.read(invoiceSearchQueryProvider.notifier).setQuery(
-                            patient.mrNumber.isNotEmpty ? patient.mrNumber : patient.patientId,
-                          );
-                      Navigator.pop(context);
-                      context.go('/invoices');
-                    },
-                  ),
-                  _ActionIconButton(
-                    icon: Icons.description_outlined,
-                    color: Colors.orange.shade600,
-                    tooltip: 'Generate Invoice',
-                    onPressed: () {
-                      Navigator.pop(context);
-                      Navigator.of(context).push(
-                        MaterialPageRoute(
-                          builder: (_) => InvoiceFormScreen(patientId: patient.patientId),
-                        ),
-                      );
-                    },
-                  ),
-                  _ActionIconButton(
-                    icon: Icons.edit_outlined,
-                    color: Colors.blue.shade600,
-                    tooltip: 'Edit Patient',
-                    onPressed: () {
-                      Navigator.pop(context);
-                      Navigator.of(context).push(
-                        MaterialPageRoute(
-                          builder: (_) => PatientFormScreen(existingPatient: patient),
-                        ),
-                      );
-                    },
-                  ),
-                  if (patient.isDiscontinued)
-                    _ActionIconButton(
-                      icon: Icons.play_circle_outline,
-                      color: Colors.green.shade600,
-                      tooltip: 'Activate Patient',
+                  if (patient.isDeleted)
+                    ElevatedButton.icon(
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Colors.green.shade700,
+                        foregroundColor: Colors.white,
+                        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                      ),
+                      icon: const Icon(Icons.restore_from_trash_rounded, size: 18),
+                      label: const Text(
+                        'Restore Patient',
+                        style: TextStyle(fontWeight: FontWeight.bold),
+                      ),
                       onPressed: () async {
                         final confirm = await showDialog<bool>(
                           context: context,
                           builder: (ctx) => AlertDialog(
-                            title: const Text('Activate Patient?'),
+                            title: Row(
+                              children: [
+                                Icon(Icons.restore_from_trash_rounded, color: Colors.green.shade700),
+                                const SizedBox(width: 8),
+                                const Text('Restore Patient?'),
+                              ],
+                            ),
                             content: Text(
-                              'Are you sure you want to reactivate ${patient.patientName}? This will restore the patient and all associated invoices & financial records back to active views.',
+                              'Are you sure you want to restore ${patient.patientName} and all linked invoices?\n\nThis will return the patient and invoices to active lists and financial calculations.',
                             ),
                             actions: [
                               TextButton(
                                 onPressed: () => Navigator.pop(ctx, false),
                                 child: const Text('Cancel'),
                               ),
-                              TextButton(
-                                onPressed: () => Navigator.pop(ctx, true),
-                                child: const Text(
-                                  'Activate',
-                                  style: TextStyle(color: Colors.green, fontWeight: FontWeight.bold),
+                              ElevatedButton.icon(
+                                style: ElevatedButton.styleFrom(
+                                  backgroundColor: Colors.green.shade700,
+                                  foregroundColor: Colors.white,
                                 ),
+                                onPressed: () => Navigator.pop(ctx, true),
+                                icon: const Icon(Icons.restore_rounded, size: 16),
+                                label: const Text('Restore', style: TextStyle(fontWeight: FontWeight.bold)),
                               ),
                             ],
                           ),
                         );
                         if (confirm == true) {
                           final user = ref.read(authStateProvider).value;
-                          await ref.read(patientRepositoryProvider).reactivatePatient(
-                                patientId: patient.patientId,
-                                patientName: patient.patientName,
-                                userId: user!.uid,
-                                organizationId: patient.organizationId,
+                          try {
+                            await ref.read(patientRepositoryProvider).restorePatient(
+                                  patientId: patient.patientId,
+                                  patientName: patient.patientName,
+                                  userId: user?.uid ?? 'Admin',
+                                  organizationId: patient.organizationId,
+                                );
+                            if (context.mounted) {
+                              Navigator.pop(context);
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                SnackBar(
+                                  content: Text('✓ Patient "${patient.patientName}" and linked invoices restored successfully'),
+                                  backgroundColor: Colors.green.shade700,
+                                  behavior: SnackBarBehavior.floating,
+                                ),
                               );
-                          if (context.mounted) Navigator.pop(context);
+                            }
+                          } catch (e) {
+                            if (context.mounted) {
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                SnackBar(
+                                  content: Text('Failed to restore patient: $e'),
+                                  backgroundColor: Colors.red.shade700,
+                                  behavior: SnackBarBehavior.floating,
+                                ),
+                              );
+                            }
+                          }
                         }
                       },
                     )
-                  else
+                  else ...[
                     _ActionIconButton(
-                      icon: Icons.pause_circle_outline,
-                      color: Colors.orange.shade800,
-                      tooltip: 'Discontinue Patient',
-                      onPressed: () async {
-                        final confirm = await showDialog<bool>(
-                          context: context,
-                          builder: (ctx) => AlertDialog(
-                            title: const Text('Discontinue Patient?'),
-                            content: Text(
-                              'Are you sure you want to discontinue ${patient.patientName}? This will hide the patient and all associated invoices & financial records from the app UI while preserving full database history.',
-                            ),
-                            actions: [
-                              TextButton(
-                                onPressed: () => Navigator.pop(ctx, false),
-                                child: const Text('Cancel'),
-                              ),
-                              TextButton(
-                                onPressed: () => Navigator.pop(ctx, true),
-                                child: const Text(
-                                  'Discontinue',
-                                  style: TextStyle(color: Colors.orange, fontWeight: FontWeight.bold),
-                                ),
-                              ),
-                            ],
-                          ),
-                        );
-                        if (confirm == true) {
-                          final user = ref.read(authStateProvider).value;
-                          await ref.read(patientRepositoryProvider).discontinuePatient(
-                                patientId: patient.patientId,
-                                patientName: patient.patientName,
-                                userId: user!.uid,
-                                organizationId: patient.organizationId,
-                              );
-                          if (context.mounted) Navigator.pop(context);
-                        }
+                      icon: Icons.manage_search_rounded,
+                      color: const Color(0xFF004B93),
+                      tooltip: 'Search Invoices',
+                      onPressed: () {
+                        ref.read(invoiceSearchQueryProvider.notifier).setQuery(
+                              patient.mrNumber.isNotEmpty ? patient.mrNumber : patient.patientId,
+                            );
+                        Navigator.pop(context);
+                        context.go('/invoices');
                       },
                     ),
-                  _ActionIconButton(
-                    icon: Icons.add_alarm_rounded,
-                    color: const Color(0xFF1565C0),
-                    tooltip: 'Schedule Reminder',
-                    onPressed: () {
-                      showModalBottomSheet(
-                        context: context,
-                        useRootNavigator: true,
-                        isScrollControlled: true,
-                        backgroundColor: Colors.transparent,
-                        builder: (_) => ScheduleNotificationModal(preSelectedPatient: patient),
-                      );
-                    },
-                  ),
-                  if (role == 'admin')
                     _ActionIconButton(
-                      icon: Icons.delete_outline,
-                      color: Colors.red.shade600,
-                      tooltip: 'Delete Patient',
-                      onPressed: () async {
-                        final confirm = await showDialog<bool>(
-                          context: context,
-                          builder: (ctx) => AlertDialog(
-                            title: const Text('Delete Patient?'),
-                            content: Text(
-                              'Are you sure you want to delete ${patient.patientName}? This can be restored later.',
-                            ),
-                            actions: [
-                              TextButton(
-                                onPressed: () => Navigator.pop(ctx, false),
-                                child: const Text('Cancel'),
-                              ),
-                              TextButton(
-                                onPressed: () => Navigator.pop(ctx, true),
-                                child: const Text(
-                                  'Delete',
-                                  style: TextStyle(color: Colors.red),
-                                ),
-                              ),
-                            ],
+                      icon: Icons.description_outlined,
+                      color: Colors.orange.shade600,
+                      tooltip: 'Generate Invoice',
+                      onPressed: () {
+                        Navigator.pop(context);
+                        Navigator.of(context).push(
+                          MaterialPageRoute(
+                            builder: (_) => InvoiceFormScreen(patientId: patient.patientId),
                           ),
                         );
-                        if (confirm == true) {
-                          final user = ref.read(authStateProvider).value;
-                          await ref.read(patientRepositoryProvider).softDeletePatient(
-                                patientId: patient.patientId,
-                                patientName: patient.patientName,
-                                userId: user!.uid,
-                                organizationId: patient.organizationId,
-                              );
-                          if (context.mounted) Navigator.pop(context);
-                        }
                       },
                     ),
+                    _ActionIconButton(
+                      icon: Icons.edit_outlined,
+                      color: Colors.blue.shade600,
+                      tooltip: 'Edit Patient',
+                      onPressed: () {
+                        Navigator.pop(context);
+                        Navigator.of(context).push(
+                          MaterialPageRoute(
+                            builder: (_) => PatientFormScreen(existingPatient: patient),
+                          ),
+                        );
+                      },
+                    ),
+                    if (patient.isDiscontinued)
+                      _ActionIconButton(
+                        icon: Icons.play_circle_outline,
+                        color: Colors.green.shade600,
+                        tooltip: 'Activate Patient',
+                        onPressed: () async {
+                          final confirm = await showDialog<bool>(
+                            context: context,
+                            builder: (ctx) => AlertDialog(
+                              title: const Text('Activate Patient?'),
+                              content: Text(
+                                'Are you sure you want to reactivate ${patient.patientName}? This will restore the patient and all associated invoices & financial records back to active views.',
+                              ),
+                              actions: [
+                                TextButton(
+                                  onPressed: () => Navigator.pop(ctx, false),
+                                  child: const Text('Cancel'),
+                                ),
+                                TextButton(
+                                  onPressed: () => Navigator.pop(ctx, true),
+                                  child: const Text(
+                                    'Activate',
+                                    style: TextStyle(color: Colors.green, fontWeight: FontWeight.bold),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          );
+                          if (confirm == true) {
+                            final user = ref.read(authStateProvider).value;
+                            await ref.read(patientRepositoryProvider).reactivatePatient(
+                                  patientId: patient.patientId,
+                                  patientName: patient.patientName,
+                                  userId: user!.uid,
+                                  organizationId: patient.organizationId,
+                                );
+                            if (context.mounted) Navigator.pop(context);
+                          }
+                        },
+                      )
+                    else
+                      _ActionIconButton(
+                        icon: Icons.pause_circle_outline,
+                        color: Colors.orange.shade800,
+                        tooltip: 'Discontinue Patient',
+                        onPressed: () async {
+                          final confirm = await showDialog<bool>(
+                            context: context,
+                            builder: (ctx) => AlertDialog(
+                              title: const Text('Discontinue Patient?'),
+                              content: Text(
+                                'Are you sure you want to discontinue ${patient.patientName}? This will hide the patient and all associated invoices & financial records from the app UI while preserving full database history.',
+                              ),
+                              actions: [
+                                TextButton(
+                                  onPressed: () => Navigator.pop(ctx, false),
+                                  child: const Text('Cancel'),
+                                ),
+                                TextButton(
+                                  onPressed: () => Navigator.pop(ctx, true),
+                                  child: const Text(
+                                    'Discontinue',
+                                    style: TextStyle(color: Colors.orange, fontWeight: FontWeight.bold),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          );
+                          if (confirm == true) {
+                            final user = ref.read(authStateProvider).value;
+                            await ref.read(patientRepositoryProvider).discontinuePatient(
+                                  patientId: patient.patientId,
+                                  patientName: patient.patientName,
+                                  userId: user!.uid,
+                                  organizationId: patient.organizationId,
+                                );
+                            if (context.mounted) Navigator.pop(context);
+                          }
+                        },
+                      ),
+                    _ActionIconButton(
+                      icon: Icons.add_alarm_rounded,
+                      color: const Color(0xFF1565C0),
+                      tooltip: 'Schedule Reminder',
+                      onPressed: () {
+                        showModalBottomSheet(
+                          context: context,
+                          useRootNavigator: true,
+                          isScrollControlled: true,
+                          backgroundColor: Colors.transparent,
+                          builder: (_) => ScheduleNotificationModal(preSelectedPatient: patient),
+                        );
+                      },
+                    ),
+                    if (role == 'admin')
+                      _ActionIconButton(
+                        icon: Icons.delete_outline,
+                        color: Colors.red.shade600,
+                        tooltip: 'Delete Patient',
+                        onPressed: () async {
+                          final confirm = await showDialog<bool>(
+                            context: context,
+                            builder: (ctx) => AlertDialog(
+                              title: const Text('Delete Patient?'),
+                              content: Text(
+                                'Are you sure you want to delete ${patient.patientName}? This can be restored later.',
+                              ),
+                              actions: [
+                                TextButton(
+                                  onPressed: () => Navigator.pop(ctx, false),
+                                  child: const Text('Cancel'),
+                                ),
+                                TextButton(
+                                  onPressed: () => Navigator.pop(ctx, true),
+                                  child: const Text(
+                                    'Delete',
+                                    style: TextStyle(color: Colors.red),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          );
+                          if (confirm == true) {
+                            final user = ref.read(authStateProvider).value;
+                            await ref.read(patientRepositoryProvider).softDeletePatient(
+                                  patientId: patient.patientId,
+                                  patientName: patient.patientName,
+                                  userId: user!.uid,
+                                  organizationId: patient.organizationId,
+                                );
+                            if (context.mounted) Navigator.pop(context);
+                          }
+                        },
+                      ),
+                  ],
                 ],
               ),
             ],
           ),
+          if (patient.isDeleted) ...[
+            const SizedBox(height: 12),
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: Colors.red.shade50,
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: Colors.red.shade200),
+              ),
+              child: Row(
+                children: [
+                  Icon(Icons.delete_outline, color: Colors.red.shade700, size: 20),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Text(
+                      'This patient is currently soft-deleted (archived). All associated invoices and financial records are excluded from active totals until restored.',
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: Colors.red.shade900,
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
           const Divider(),
           _buildDetailRow(context, 'Name', patient.patientName),
           _buildDetailRow(context, 'MR Number', patient.mrNumber),
