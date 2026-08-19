@@ -3,7 +3,6 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:cloud_functions/cloud_functions.dart';
 import '../../core/errors/app_error.dart';
 
 final firebaseAuthProvider = Provider<FirebaseAuth>((ref) {
@@ -209,8 +208,8 @@ class AuthController {
     }
   }
 
-  /// Completely deletes a user account via Cloud Function (Auth + Firestore).
-  /// Strictly requires Cloud Function execution to prevent orphaned Auth accounts.
+  /// Soft-deletes a user account in Firestore (Spark Plan compatible).
+  /// Immediately deactivates and forces sign-out across all devices.
   Future<void> deleteUserAccount({required String targetUid}) async {
     final userDoc = await firestore.collection('users').doc(targetUid).get();
     if (!userDoc.exists) return;
@@ -241,34 +240,31 @@ class AuthController {
       }
     }
 
-    // 3. Call Cloud Function to delete Auth account + Firestore document.
+    // 3. Perform soft-delete in Firestore
+    await firestore.collection('users').doc(targetUid).update({
+      'isDeleted': true,
+      'status': 'deactivated',
+      'forceLogoutToken': FieldValue.serverTimestamp(),
+      'deletedAt': FieldValue.serverTimestamp(),
+      'updatedAt': FieldValue.serverTimestamp(),
+    });
+  }
+
+  /// Sends a password reset email to the user's email address (Firebase Spark Plan compatible).
+  Future<void> sendPasswordResetEmail({required String email}) async {
+    final cleanEmail = email.trim().toLowerCase();
+    if (cleanEmail.isEmpty) {
+      throw Exception('Email address is required to send password reset email.');
+    }
     try {
-      final callable = FirebaseFunctions.instance.httpsCallable('deleteUserAccount');
-      final response = await callable.call<Map<String, dynamic>>({
-        'targetUid': targetUid,
-      });
-      if (response.data['success'] != true) {
-        throw Exception('Unable to delete user. Please try again.');
-      }
-    } on FirebaseFunctionsException catch (e) {
-      debugPrint('[deleteUserAccount] Cloud Function exception: ${e.code} - ${e.message}');
-      throw Exception(e.message ?? 'Unable to delete user. Please try again.');
-    } catch (e) {
-      debugPrint('[deleteUserAccount] Cloud Function call failed: $e');
-      if (e is Exception && !e.toString().contains('FirebaseFunctionsException')) {
-        final cleanMsg = e.toString().replaceFirst('Exception: ', '').trim();
-        if (cleanMsg.isNotEmpty) throw Exception(cleanMsg);
-      }
-      throw Exception('Unable to delete user. Please try again.');
+      await auth.sendPasswordResetEmail(email: cleanEmail);
+    } on FirebaseAuthException catch (e) {
+      throw Exception(AppError.map(e));
     }
   }
 
-  /// Updates a user's password using Firebase Auth or server-side Admin SDK via Cloud Functions.
-  Future<void> updateUserPassword({
-    required String targetUid,
-    required String newPassword,
-    String? currentPassword,
-  }) async {
+  /// Self-service password update for the currently authenticated user.
+  Future<void> updateCurrentUserPassword({required String newPassword}) async {
     if (newPassword.trim().length < 6) {
       throw Exception('Password must be at least 6 characters long.');
     }
@@ -278,54 +274,16 @@ class AuthController {
       throw Exception('User is not authenticated. Please log in again.');
     }
 
-    // 1. If logged-in user is updating their OWN password:
-    if (currentUser.uid == targetUid) {
-      try {
-        await currentUser.updatePassword(newPassword);
-      } on FirebaseAuthException catch (e) {
-        throw Exception(AppError.map(e));
-      }
-
-      await firestore.collection('users').doc(targetUid).update({
+    try {
+      await currentUser.updatePassword(newPassword);
+      await firestore.collection('users').doc(currentUser.uid).update({
         'passwordUpdated': true,
         'lastPasswordChange': FieldValue.serverTimestamp(),
         'updatedAt': FieldValue.serverTimestamp(),
       });
-      return;
+    } on FirebaseAuthException catch (e) {
+      throw Exception(AppError.map(e));
     }
-
-    // 2. Admin updating ANOTHER staff member's password via Cloud Function
-    final userDoc = await firestore.collection('users').doc(targetUid).get();
-    if (!userDoc.exists) {
-      throw Exception('User document not found in Firestore.');
-    }
-
-    try {
-      final callable = FirebaseFunctions.instance.httpsCallable('updateUserPassword');
-      final response = await callable.call<Map<String, dynamic>>({
-        'targetUid': targetUid,
-        'newPassword': newPassword,
-      });
-      if (response.data['success'] != true) {
-        throw Exception('Failed to update user password. Please try again.');
-      }
-    } on FirebaseFunctionsException catch (e) {
-      debugPrint('[updateUserPassword] Cloud Function exception: ${e.code} - ${e.message}');
-      throw Exception(e.message ?? 'Failed to update user password.');
-    } catch (e) {
-      debugPrint('[updateUserPassword] Cloud Function call failed: $e');
-      if (e is Exception && !e.toString().contains('FirebaseFunctionsException')) {
-        final cleanMsg = e.toString().replaceFirst('Exception: ', '').trim();
-        if (cleanMsg.isNotEmpty) throw Exception(cleanMsg);
-      }
-      throw Exception('Failed to update user password. Please try again.');
-    }
-
-    await firestore.collection('users').doc(targetUid).update({
-      'passwordUpdated': true,
-      'lastPasswordChange': FieldValue.serverTimestamp(),
-      'updatedAt': FieldValue.serverTimestamp(),
-    });
   }
 
   /// Deactivates a user account. Sets status to 'deactivated' and writes

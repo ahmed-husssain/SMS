@@ -281,14 +281,9 @@ class _UserDetailsModal extends ConsumerStatefulWidget {
 class _UserDetailsModalState extends ConsumerState<_UserDetailsModal> {
   late TextEditingController _nameController;
   late TextEditingController _phoneController;
-  final TextEditingController _currentPasswordController = TextEditingController();
-  final TextEditingController _passwordController = TextEditingController();
-  final TextEditingController _confirmPasswordController = TextEditingController();
   late String _selectedRole;
-  bool _obscureCurrentPassword = true;
-  bool _obscurePassword = true;
-  bool _obscureConfirmPassword = true;
   bool _isSaving = false;
+  bool _isSendingReset = false;
   String _statusMessage = '';
 
   @override
@@ -303,34 +298,13 @@ class _UserDetailsModalState extends ConsumerState<_UserDetailsModal> {
   void dispose() {
     _nameController.dispose();
     _phoneController.dispose();
-    _currentPasswordController.dispose();
-    _passwordController.dispose();
-    _confirmPasswordController.dispose();
     super.dispose();
   }
 
   Future<void> _updateUser() async {
-    final newPass = _passwordController.text;
-    final confirmPass = _confirmPasswordController.text;
-
-    if (newPass.isNotEmpty) {
-      if (newPass.length < 8) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Password must be at least 8 characters'), backgroundColor: Colors.red),
-        );
-        return;
-      }
-      if (newPass != confirmPass) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Passwords do not match'), backgroundColor: Colors.red),
-        );
-        return;
-      }
-    }
-
     setState(() {
       _isSaving = true;
-      _statusMessage = newPass.isNotEmpty ? 'Updating user password in Firebase Auth...' : 'Updating user details...';
+      _statusMessage = 'Updating user details...';
     });
 
     try {
@@ -341,26 +315,14 @@ class _UserDetailsModalState extends ConsumerState<_UserDetailsModal> {
         'updatedAt': FieldValue.serverTimestamp(),
       };
 
-      if (newPass.isNotEmpty) {
-        final authController = ref.read(authControllerProvider);
-        await authController.updateUserPassword(
-          targetUid: widget.user['uid'],
-          newPassword: newPass,
-          currentPassword: _currentPasswordController.text.trim(),
-        );
-
-        updateData['passwordUpdated'] = true;
-        updateData['lastPasswordChange'] = FieldValue.serverTimestamp();
-      }
-
       await FirebaseFirestore.instance.collection('users').doc(widget.user['uid']).update(updateData);
-      
+
       if (mounted) {
         Navigator.pop(context);
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(newPass.isNotEmpty ? 'User details and password updated successfully!' : 'User updated successfully'),
-            backgroundColor: Colors.green,
+          const SnackBar(
+            content: Text('✓ User updated successfully'),
+            backgroundColor: Color(0xFF16A34A),
           ),
         );
       }
@@ -385,12 +347,49 @@ class _UserDetailsModalState extends ConsumerState<_UserDetailsModal> {
     }
   }
 
+  Future<void> _sendPasswordReset() async {
+    final username = (widget.user['username'] ?? '').toString().trim();
+    final email = (widget.user['email'] ?? '').toString().trim().isNotEmpty
+        ? widget.user['email'].toString().trim()
+        : '${username.toLowerCase()}@internal.shifa.app';
+
+    setState(() => _isSendingReset = true);
+    try {
+      final authController = ref.read(authControllerProvider);
+      await authController.sendPasswordResetEmail(email: email);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('✓ Password reset link sent to $email successfully.'),
+            backgroundColor: const Color(0xFF16A34A),
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        final errorMsg = AppError.map(e);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(errorMsg),
+            backgroundColor: const Color(0xFFDC2626),
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _isSendingReset = false);
+      }
+    }
+  }
+
   Future<void> _deleteUser() async {
     final confirm = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
         title: const Text('Delete User?'),
-        content: Text('Are you sure you want to delete ${widget.user['name']}?'),
+        content: Text('Are you sure you want to delete ${widget.user['name']}? This user will be deactivated and removed from active staff lists.'),
         actions: [
           TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
           TextButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Delete', style: TextStyle(color: Colors.red))),
@@ -439,17 +438,51 @@ class _UserDetailsModalState extends ConsumerState<_UserDetailsModal> {
   Widget build(BuildContext context) {
     final createdAt = widget.user['createdAt'] as Timestamp?;
     final dateStr = createdAt != null ? createdAt.toDate().toString() : 'N/A';
+    final username = (widget.user['username'] ?? 'N/A').toString();
+    final email = (widget.user['email'] ?? '').toString().isNotEmpty
+        ? widget.user['email'].toString()
+        : '${username.toLowerCase()}@internal.shifa.app';
 
-    return SingleChildScrollView(
-      child: Padding(
-        padding: EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom + 24, left: 24, right: 24, top: 24),
+    return SafeArea(
+      child: SingleChildScrollView(
+        padding: EdgeInsets.only(
+          bottom: MediaQuery.of(context).viewInsets.bottom + 24,
+          left: 20,
+          right: 20,
+          top: 24,
+        ),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text('User Details & Security', style: Theme.of(context).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.bold)),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Expanded(
+                  child: Text(
+                    'User Details & Security',
+                    style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+                          fontWeight: FontWeight.bold,
+                        ),
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+                IconButton(
+                  icon: const Icon(Icons.close),
+                  onPressed: () => Navigator.pop(context),
+                ),
+              ],
+            ),
             const SizedBox(height: 12),
-            Text('Username: ${widget.user['username'] ?? 'N/A'}', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
+            Text(
+              'Username: $username',
+              style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              'Auth Email: $email',
+              style: TextStyle(fontSize: 12, color: Colors.grey.shade700),
+            ),
             const SizedBox(height: 4),
             Text('Created: $dateStr', style: TextStyle(fontSize: 12, color: Colors.grey.shade600)),
             const SizedBox(height: 16),
@@ -466,7 +499,7 @@ class _UserDetailsModalState extends ConsumerState<_UserDetailsModal> {
             ),
             const SizedBox(height: 14),
             DropdownButtonFormField<String>(
-              value: (['staff', 'admin'].contains(_selectedRole)) ? _selectedRole : 'staff',
+              initialValue: (['staff', 'admin'].contains(_selectedRole)) ? _selectedRole : 'staff',
               decoration: const InputDecoration(labelText: 'Role', border: OutlineInputBorder()),
               items: const [
                 DropdownMenuItem(value: 'staff', child: Text('User')),
@@ -477,55 +510,67 @@ class _UserDetailsModalState extends ConsumerState<_UserDetailsModal> {
               },
             ),
             const SizedBox(height: 20),
-            const Text('UPDATE PASSWORD (OPTIONAL)', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Color(0xFF004B93), letterSpacing: 0.5)),
-            const SizedBox(height: 10),
-            TextFormField(
-              controller: _currentPasswordController,
-              obscureText: _obscureCurrentPassword,
-              enabled: !_isSaving,
-              decoration: InputDecoration(
-                labelText: 'Current Password (if changed previously)',
-                hintText: 'Leave empty for default initial accounts',
-                border: const OutlineInputBorder(),
-                suffixIcon: IconButton(
-                  tooltip: _obscureCurrentPassword ? 'Show password' : 'Hide password',
-                  icon: Icon(_obscureCurrentPassword ? Icons.visibility_off : Icons.visibility),
-                  onPressed: () => setState(() => _obscureCurrentPassword = !_obscureCurrentPassword),
-                ),
+
+            // ─── Password Reset Section (Firebase Spark Plan) ───
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: const Color(0xFFF8FAFC),
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: const Color(0xFFE2E8F0)),
               ),
-            ),
-            const SizedBox(height: 14),
-            TextFormField(
-              controller: _passwordController,
-              obscureText: _obscurePassword,
-              enabled: !_isSaving,
-              decoration: InputDecoration(
-                labelText: 'New Password',
-                hintText: 'Leave empty to keep current password',
-                border: const OutlineInputBorder(),
-                suffixIcon: IconButton(
-                  tooltip: _obscurePassword ? 'Show password' : 'Hide password',
-                  icon: Icon(_obscurePassword ? Icons.visibility_off : Icons.visibility),
-                  onPressed: () => setState(() => _obscurePassword = !_obscurePassword),
-                ),
-              ),
-            ),
-            const SizedBox(height: 14),
-            TextFormField(
-              controller: _confirmPasswordController,
-              obscureText: _obscureConfirmPassword,
-              enabled: !_isSaving,
-              decoration: InputDecoration(
-                labelText: 'Confirm New Password',
-                border: const OutlineInputBorder(),
-                suffixIcon: IconButton(
-                  tooltip: _obscureConfirmPassword ? 'Show password' : 'Hide password',
-                  icon: Icon(_obscureConfirmPassword ? Icons.visibility_off : Icons.visibility),
-                  onPressed: () => setState(() => _obscureConfirmPassword = !_obscureConfirmPassword),
-                ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Row(
+                    children: [
+                      Icon(Icons.lock_reset_rounded, size: 20, color: Color(0xFF004B93)),
+                      SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          'PASSWORD RESET (SPARK PLAN)',
+                          style: TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.bold,
+                            color: Color(0xFF004B93),
+                            letterSpacing: 0.5,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    'Trigger a secure password reset link to $email. The user will receive an email allowing them to choose a new password.',
+                    style: TextStyle(fontSize: 12, color: Colors.grey.shade700, height: 1.4),
+                  ),
+                  const SizedBox(height: 12),
+                  SizedBox(
+                    width: double.infinity,
+                    child: OutlinedButton.icon(
+                      onPressed: (_isSaving || _isSendingReset) ? null : _sendPasswordReset,
+                      icon: _isSendingReset
+                          ? const SizedBox(
+                              width: 16,
+                              height: 16,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            )
+                          : const Icon(Icons.mark_email_read_outlined, size: 18),
+                      label: Text(_isSendingReset ? 'Sending Email...' : 'Send Password Reset Email'),
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: const Color(0xFF004B93),
+                        side: const BorderSide(color: Color(0xFF004B93)),
+                        padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 16),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                      ),
+                    ),
+                  ),
+                ],
               ),
             ),
             const SizedBox(height: 20),
+
             if (_isSaving) ...[
               Container(
                 width: double.infinity,
@@ -558,8 +603,13 @@ class _UserDetailsModalState extends ConsumerState<_UserDetailsModal> {
                 ),
               ),
             ],
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+
+            // ─── Modal Actions (Overflow Safe) ───
+            Wrap(
+              alignment: WrapAlignment.spaceBetween,
+              crossAxisAlignment: WrapCrossAlignment.center,
+              spacing: 12,
+              runSpacing: 12,
               children: [
                 TextButton.icon(
                   onPressed: _isSaving ? null : _deleteUser,
@@ -580,6 +630,7 @@ class _UserDetailsModalState extends ConsumerState<_UserDetailsModal> {
                     backgroundColor: const Color(0xFF004B93),
                     foregroundColor: Colors.white,
                     padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
                   ),
                 ),
               ],
@@ -688,7 +739,8 @@ class _DeactivationSwitchState extends ConsumerState<_DeactivationSwitch> {
     }
     return Switch(
       value: widget.isActive,
-      activeColor: Colors.green,
+      activeThumbColor: Colors.green,
+      activeTrackColor: Colors.green.shade200,
       inactiveThumbColor: Colors.orange.shade700,
       inactiveTrackColor: Colors.orange.shade100,
       onChanged: _handleToggle,
