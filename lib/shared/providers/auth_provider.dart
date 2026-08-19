@@ -62,25 +62,12 @@ final userProfileProvider = StreamProvider<Map<String, dynamic>?>((ref) {
           return null;
         }
         final data = snapshot.data();
-        if (data != null) {
-          // Sanitize & delete any legacy plaintext password fields if present
-          if (data.containsKey('currentPass') || data.containsKey('password')) {
-            snapshot.reference.update({
-              'currentPass': FieldValue.delete(),
-              'password': FieldValue.delete(),
-            }).catchError((_) {});
-          }
-
-          // Hard-deleted docs are treated as non-existent
-          final isDeleted = data['isDeleted'] == true;
-          if (isDeleted) {
-            return null;
-          }
-
-          // NOTE: We no longer return null for deactivated users here.
-          // Instead, we return the full profile so the ROUTER can detect
-          // the deactivated status and force sign-out on ALL devices
-          // via the real-time Firestore stream.
+        if (data == null) {
+          return null;
+        }
+        final isDeleted = data['isDeleted'] == true;
+        if (isDeleted) {
+          return null;
         }
         return data;
       });
@@ -106,21 +93,19 @@ class AuthController {
   });
 
   /// Deterministic client-side username-to-email mapping.
-  /// E.g. "ADMIN001" -> "admin001@internal.shifa.app"
+  /// E.g. "IT" -> "it@internal.shifa.app", "ADMIN001" -> "admin001@internal.shifa.app"
   String _resolveEmail(String username) {
     return '${username.toLowerCase().trim()}@internal.shifa.app';
   }
 
   Future<void> login(String username, String password) async {
-    final cleanUsername = username.trim().toUpperCase();
-    final lowerUsername = username.trim().toLowerCase();
     final email = _resolveEmail(username);
 
     try {
-      // 1. Authenticate with Firebase Auth directly using deterministic email
+      // Authenticate with Firebase Auth directly using deterministic email
       final credential = await auth.signInWithEmailAndPassword(email: email, password: password);
 
-      // 2. Verify user status in Firestore by authenticated UID
+      // Verify user status in Firestore by authenticated UID
       if (credential.user != null) {
         final uid = credential.user!.uid;
         DocumentSnapshot<Map<String, dynamic>> userDoc;
@@ -146,50 +131,13 @@ class AuthController {
         }
       }
     } on FirebaseAuthException catch (e) {
-      if (e.code == 'user-not-found' || e.code == 'wrong-password' || e.code == 'invalid-credential' || e.code == 'user-disabled') {
-        // Auto-provision internal accounts (IT, MASTER) on login if Auth rejected credentials
-        if (cleanUsername == 'IT' || cleanUsername == 'MASTER') {
-          final isIT = cleanUsername == 'IT';
-          final targetEmail = isIT ? 'it@internal.shifa.app' : email;
-          final targetPassword = isIT ? 'it@shifa' : password;
-
-          for (final tryEmail in [targetEmail, email, '${lowerUsername}_master@internal.shifa.app', '${lowerUsername}2026@internal.shifa.app']) {
-            try {
-              final newCred = await auth.createUserWithEmailAndPassword(email: tryEmail, password: targetPassword);
-              if (newCred.user != null) {
-                final uid = newCred.user!.uid;
-                await firestore.collection('users').doc(uid).set({
-                  'uid': uid,
-                  'username': cleanUsername,
-                  'name': isIT ? 'Internal IT Support' : 'Master Admin',
-                  'role': 'admin',
-                  'isInternalAccount': isIT,
-                  'isHidden': true,
-                  'status': 'active',
-                  'isDeleted': false,
-                  'organizationId': 'default',
-                  'createdAt': FieldValue.serverTimestamp(),
-                  'updatedAt': FieldValue.serverTimestamp(),
-                }, SetOptions(merge: true));
-
-                // If user logged in with standard login credentials, log them in
-                if (isIT) {
-                  await auth.signInWithEmailAndPassword(email: 'it@internal.shifa.app', password: 'it@shifa');
-                }
-                return;
-              }
-            } catch (_) {}
-          }
-        }
-        if (e.code == 'user-disabled') {
-          ref?.read(loginErrorMessageProvider.notifier).setMessage(
-            'Your account has been deactivated. Please contact an administrator.',
-          );
-          throw Exception('Your account has been deactivated. Please contact an administrator.');
-        }
-        throw Exception(e.code == 'user-not-found' ? 'No account found for that username.' : 'Incorrect password. Please try again.');
+      if (e.code == 'user-disabled') {
+        ref?.read(loginErrorMessageProvider.notifier).setMessage(
+          'Your account has been deactivated. Please contact an administrator.',
+        );
+        throw Exception('Your account has been deactivated. Please contact an administrator.');
       }
-      rethrow;
+      throw Exception(e.code == 'user-not-found' ? 'No account found for that username.' : 'Incorrect password. Please try again.');
     }
   }
 
@@ -241,7 +189,7 @@ class AuthController {
       final uid = userCredential.user!.uid;
       await tempAuth.signOut();
 
-      // Write the staff profile to Firestore
+      // Write the staff profile to Firestore (no plaintext password storage)
       await firestore.collection('users').doc(uid).set({
         'uid': uid,
         'username': cleanUsername,
@@ -253,7 +201,6 @@ class AuthController {
         'createdBy': auth.currentUser!.uid,
         'createdAt': FieldValue.serverTimestamp(),
         'isDeleted': false,
-        'lastKnownPass': password,
       });
     } finally {
       if (tempApp != null) {
@@ -295,7 +242,6 @@ class AuthController {
     }
 
     // 3. Call Cloud Function to delete Auth account + Firestore document.
-    // No client-side fallback: ensures Auth and Firestore accounts are deleted together.
     try {
       final callable = FirebaseFunctions.instance.httpsCallable('deleteUserAccount');
       final response = await callable.call<Map<String, dynamic>>({
@@ -318,7 +264,6 @@ class AuthController {
   }
 
   /// Updates a user's password using Firebase Auth or server-side Admin SDK via Cloud Functions.
-  /// Never attempts candidate passwords or target user sign-ins.
   Future<void> updateUserPassword({
     required String targetUid,
     required String newPassword,
@@ -345,87 +290,41 @@ class AuthController {
         'passwordUpdated': true,
         'lastPasswordChange': FieldValue.serverTimestamp(),
         'updatedAt': FieldValue.serverTimestamp(),
-        'currentPass': FieldValue.delete(),
-        'password': FieldValue.delete(),
       });
       return;
     }
 
-    // 2. Admin updating ANOTHER staff member's password:
+    // 2. Admin updating ANOTHER staff member's password via Cloud Function
     final userDoc = await firestore.collection('users').doc(targetUid).get();
     if (!userDoc.exists) {
       throw Exception('User document not found in Firestore.');
     }
 
-    final userData = userDoc.data()!;
-    final username = (userData['username'] ?? '').toString();
-    final email = _resolveEmail(username);
-
-    bool authUpdated = false;
-
-    // A. Try Cloud Function first
     try {
       final callable = FirebaseFunctions.instance.httpsCallable('updateUserPassword');
       final response = await callable.call<Map<String, dynamic>>({
         'targetUid': targetUid,
         'newPassword': newPassword,
       });
-      if (response.data['success'] == true) {
-        authUpdated = true;
+      if (response.data['success'] != true) {
+        throw Exception('Failed to update user password. Please try again.');
       }
+    } on FirebaseFunctionsException catch (e) {
+      debugPrint('[updateUserPassword] Cloud Function exception: ${e.code} - ${e.message}');
+      throw Exception(e.message ?? 'Failed to update user password.');
     } catch (e) {
-      debugPrint('[updateUserPassword] Cloud Function call skipped/failed, using direct Auth fallback: $e');
-    }
-
-    // B. Direct fallback (EXACTLY 1 targeted sign-in attempt using known credentials, NO loops)
-    if (!authUpdated) {
-      FirebaseApp? tempApp;
-      try {
-        tempApp = await Firebase.initializeApp(
-          name: 'tempPasswordChange_${DateTime.now().millisecondsSinceEpoch}',
-          options: Firebase.app().options,
-        );
-        final tempAuth = FirebaseAuth.instanceFor(app: tempApp);
-
-        final knownPass = (currentPassword != null && currentPassword.trim().isNotEmpty)
-            ? currentPassword.trim()
-            : (userData['lastKnownPass'] ??
-                userData['initialPassword'] ??
-                userData['tempPassword'] ??
-                '${username.toLowerCase().trim()}123');
-
-        try {
-          await tempAuth.signInWithEmailAndPassword(email: email, password: knownPass.toString());
-          await tempAuth.currentUser?.updatePassword(newPassword);
-          await tempAuth.signOut();
-          authUpdated = true;
-        } on FirebaseAuthException catch (e) {
-          debugPrint('[updateUserPassword] Direct Auth fallback error: ${e.code}');
-          if (e.code == 'wrong-password' || e.code == 'invalid-credential') {
-            throw Exception('Current password incorrect or target user set a custom password. Please enter target user\'s current password in the form.');
-          }
-          throw Exception(AppError.map(e));
-        }
-      } finally {
-        if (tempApp != null) {
-          await tempApp.delete();
-        }
+      debugPrint('[updateUserPassword] Cloud Function call failed: $e');
+      if (e is Exception && !e.toString().contains('FirebaseFunctionsException')) {
+        final cleanMsg = e.toString().replaceFirst('Exception: ', '').trim();
+        if (cleanMsg.isNotEmpty) throw Exception(cleanMsg);
       }
+      throw Exception('Failed to update user password. Please try again.');
     }
 
-    if (!authUpdated) {
-      throw Exception('Failed to update user password in Firebase Auth.');
-    }
-
-    // Update Firestore user document metadata ONLY after Firebase Auth password update succeeds
     await firestore.collection('users').doc(targetUid).update({
-      'lastKnownPass': newPassword,
       'passwordUpdated': true,
       'lastPasswordChange': FieldValue.serverTimestamp(),
       'updatedAt': FieldValue.serverTimestamp(),
-      'currentPass': FieldValue.delete(),
-      'password': FieldValue.delete(),
-      'previousPassword': FieldValue.delete(),
     });
   }
 

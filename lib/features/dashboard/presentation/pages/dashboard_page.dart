@@ -24,14 +24,11 @@ final systemMetricsProvider = StreamProvider<Map<String, dynamic>>((ref) {
   double totalRevenue = 0.0;
   double totalPayout = 0.0;
 
-  for (final p in patients) {
-    if (!p.isDiscontinued) {
-      totalRevenue += p.patientAmount;
-    }
-  }
-
   for (final inv in invoices) {
     if (!inv.isDeleted && !inv.isDiscontinued) {
+      // Both Paid and Unpaid valid invoices contribute to Revenue
+      totalRevenue += inv.grandTotal;
+
       // Staff Expenditure = Invoice Days * Staff Daily Payment
       final patient = patientMap[inv.patientId];
       double staffDailyRate = 0.0;
@@ -91,14 +88,11 @@ final staffMetricsProvider = StreamProvider<Map<String, dynamic>>((ref) {
   double totalRevenue = 0.0;
   double totalPayout = 0.0;
 
-  for (final p in patients) {
-    if (!p.isDiscontinued) {
-      totalRevenue += p.patientAmount;
-    }
-  }
-
   for (final inv in invoices) {
     if (!inv.isDeleted && !inv.isDiscontinued) {
+      // Both Paid and Unpaid valid invoices contribute to Revenue
+      totalRevenue += inv.grandTotal;
+
       // Staff Expenditure = Invoice Days * Staff Daily Payment
       final patient = patientMap[inv.patientId];
       double staffDailyRate = 0.0;
@@ -134,9 +128,8 @@ class DashboardPage extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final profile = ref.watch(userProfileProvider).value;
     final role = (profile?['role'] ?? 'staff').toString().toLowerCase();
-    final username = (profile?['username'] ?? '').toString().toUpperCase();
 
-    if (role == 'admin' || username == 'SHIFA' || username == 'ADMIN001' || username == 'ADMIN' || username == 'IT') {
+    if (role == 'admin') {
       return const _AdminDashboardView();
     } else {
       return const _StaffDashboardView();

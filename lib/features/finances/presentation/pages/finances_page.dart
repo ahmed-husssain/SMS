@@ -56,13 +56,11 @@ class FinancesPage extends ConsumerWidget {
         double totalPayout = 0;
         double totalProfit = 0;
 
-        for (final p in activePatients) {
-          totalRevenue += p.patientAmount;
-        }
-
-        // Calculate staff expenditure from all valid invoices (both Paid and Unpaid)
+        // Calculate Revenue and Staff Expenditure from all valid invoices (both Paid and Unpaid)
         for (final inv in invoices) {
           if (!inv.isDiscontinued && !inv.isDeleted) {
+            totalRevenue += inv.grandTotal;
+
             final patient = patientMap[inv.patientId];
             double staffDailyRate = 0.0;
             if (patient != null && patient.staffPayment > 0) {
@@ -189,13 +187,11 @@ class FinancesPage extends ConsumerWidget {
         double totalPayout = 0;
         double totalProfit = 0;
 
-        for (final p in activePatients) {
-          totalRevenue += p.patientAmount;
-        }
-
-        // Calculate staff expenditure from this staff member's valid invoices (Paid and Unpaid)
+        // Calculate Revenue and Staff Expenditure from this staff member's valid invoices (Paid and Unpaid)
         for (final inv in invoices) {
           if (!inv.isDiscontinued && !inv.isDeleted) {
+            totalRevenue += inv.grandTotal;
+
             final patient = patientMap[inv.patientId];
             double staffDailyRate = 0.0;
             if (patient != null && patient.staffPayment > 0) {

@@ -18,9 +18,6 @@ final recentUserHighlightProvider = NotifierProvider<RecentUserHighlightNotifier
 );
 
 final allUsersProvider = StreamProvider<List<Map<String, dynamic>>>((ref) {
-  final currentUserProfile = ref.watch(userProfileProvider).value;
-  final currentRole = (currentUserProfile?['role'] ?? '').toString().toLowerCase();
-
   return FirebaseFirestore.instance
       .collection('users')
       .snapshots()
@@ -31,7 +28,7 @@ final allUsersProvider = StreamProvider<List<Map<String, dynamic>>>((ref) {
             final isInternalAccount = user['isInternalAccount'] == true;
             final isHidden = user['isHidden'] == true;
 
-            // Always hide hard-deleted users and internal/hidden accounts (e.g. IT account)
+            // Always hide hard-deleted users and internal/hidden accounts
             if (isDeleted || isInternalAccount || isHidden) return false;
 
             return true;

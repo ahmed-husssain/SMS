@@ -151,10 +151,6 @@ class PatientRepository {
     final patientDaysMap = <String, int>{};
     for (final doc in patientsSnap.docs) {
       final data = doc.data();
-      final isDiscontinued = data['isDiscontinued'] == true || data['status'] == 'discontinued';
-      if (!isDiscontinued) {
-        totalInvoiceRev += (data['patientAmount'] ?? 0.0).toDouble();
-      }
       patientPayoutMap[doc.id] = (data['staffPayment'] ?? 0.0).toDouble();
       patientDaysMap[doc.id] = (data['days'] is num ? (data['days'] as num).toInt() : 0);
     }
@@ -163,6 +159,9 @@ class PatientRepository {
       final data = doc.data();
       final isDiscontinued = data['isDiscontinued'] == true;
       if (!isDiscontinued) {
+        // Both Paid and Unpaid valid invoices contribute to Revenue
+        totalInvoiceRev += (data['grandTotal'] ?? 0.0).toDouble();
+
         final patientId = data['patientId'] ?? '';
         final totalStaffPayment = patientPayoutMap[patientId] ?? (data['staffPayment'] ?? 0.0).toDouble();
         final pDays = patientDaysMap[patientId] ?? 0;
