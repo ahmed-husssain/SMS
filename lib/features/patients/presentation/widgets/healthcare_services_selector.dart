@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:intl/intl.dart';
 
 class HealthcareServicesSelector extends StatefulWidget {
   final List<Map<String, dynamic>> initialSelectedServices;
@@ -59,8 +58,6 @@ class _HealthcareServicesSelectorState extends State<HealthcareServicesSelector>
 
   @override
   Widget build(BuildContext context) {
-    final monthlyTotal = _calculate30DayTotal();
-
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [

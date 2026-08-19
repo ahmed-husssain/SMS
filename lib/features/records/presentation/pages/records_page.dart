@@ -548,11 +548,9 @@ class _PatientDetailsModal extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final dateStr = patient.createdAt != null
-        ? DateFormat(
-            'EEEE, MMM d, yyyy \'at\' h:mm a',
-          ).format(patient.createdAt!)
-        : 'N/A';
+    final dateStr = DateFormat(
+      'EEEE, MMM d, yyyy \'at\' h:mm a',
+    ).format(patient.createdAt);
 
     return SingleChildScrollView(
       controller: scrollController,
