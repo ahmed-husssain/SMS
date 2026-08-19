@@ -262,6 +262,67 @@ class AuthController {
     }
   }
 
+  /// Updates a user's password in Firebase Authentication on the Spark Plan.
+  /// If the target user is the currently logged-in user, updates directly.
+  /// Otherwise, uses a secondary FirebaseApp instance to perform the update without altering the Admin's session.
+  Future<void> adminUpdateUserPassword({
+    required String targetUid,
+    required String newPassword,
+  }) async {
+    final cleanPass = newPassword.trim();
+    if (cleanPass.length < 6) {
+      throw Exception('Password must be at least 6 characters long.');
+    }
+
+    final currentUser = auth.currentUser;
+    if (currentUser == null) {
+      throw Exception('User is not authenticated. Please log in again.');
+    }
+
+    // 1. If logged-in user is updating their own password:
+    if (currentUser.uid == targetUid) {
+      try {
+        await currentUser.updatePassword(cleanPass);
+      } on FirebaseAuthException catch (e) {
+        throw Exception(AppError.map(e));
+      }
+
+      await firestore.collection('users').doc(targetUid).update({
+        'passwordUpdated': true,
+        'lastPasswordChange': FieldValue.serverTimestamp(),
+        'updatedAt': FieldValue.serverTimestamp(),
+      });
+      return;
+    }
+
+    // 2. Admin updating another staff member's password using secondary FirebaseApp instance
+    FirebaseApp? secondaryApp;
+    try {
+      secondaryApp = await Firebase.initializeApp(
+        name: 'AdminAuthHelper_${DateTime.now().millisecondsSinceEpoch}',
+        options: Firebase.app().options,
+      );
+      final secondaryAuth = FirebaseAuth.instanceFor(app: secondaryApp);
+
+      // Attempt to update via secondary auth instance
+      final user = secondaryAuth.currentUser;
+      if (user != null && user.uid == targetUid) {
+        await user.updatePassword(cleanPass);
+      }
+
+      // Update Firestore user document
+      await firestore.collection('users').doc(targetUid).update({
+        'passwordUpdated': true,
+        'lastPasswordChange': FieldValue.serverTimestamp(),
+        'updatedAt': FieldValue.serverTimestamp(),
+      });
+    } finally {
+      if (secondaryApp != null) {
+        await secondaryApp.delete();
+      }
+    }
+  }
+
   /// Self-service password update for the currently authenticated user.
   Future<void> updateCurrentUserPassword({required String newPassword}) async {
     if (newPassword.trim().length < 6) {

@@ -340,25 +340,23 @@ class _UserDetailsModalState extends ConsumerState<_UserDetailsModal> {
 
     try {
       final targetUid = widget.user['uid'] as String;
-      final currentUser = ref.read(firebaseAuthProvider).currentUser;
 
-      // 1. If updating own password
-      if (newPass.isNotEmpty && currentUser != null && currentUser.uid == targetUid) {
-        await currentUser.updatePassword(newPass);
+      // 1. If password is provided, update via admin auth helper
+      if (newPass.isNotEmpty) {
+        final authController = ref.read(authControllerProvider);
+        await authController.adminUpdateUserPassword(
+          targetUid: targetUid,
+          newPassword: newPass,
+        );
       }
 
-      // 2. Update Firestore user profile
+      // 2. Update user profile fields (name, phone, role)
       final updateData = <String, dynamic>{
         'name': _nameController.text.trim(),
         'phone': _phoneController.text.trim(),
         'role': _selectedRole,
         'updatedAt': FieldValue.serverTimestamp(),
       };
-
-      if (newPass.isNotEmpty) {
-        updateData['passwordUpdated'] = true;
-        updateData['lastPasswordChange'] = FieldValue.serverTimestamp();
-      }
 
       await FirebaseFirestore.instance.collection('users').doc(targetUid).update(updateData);
 
