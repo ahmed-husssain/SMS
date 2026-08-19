@@ -281,9 +281,12 @@ class _UserDetailsModal extends ConsumerStatefulWidget {
 class _UserDetailsModalState extends ConsumerState<_UserDetailsModal> {
   late TextEditingController _nameController;
   late TextEditingController _phoneController;
+  final TextEditingController _passwordController = TextEditingController();
+  final TextEditingController _confirmPasswordController = TextEditingController();
   late String _selectedRole;
+  bool _obscurePassword = true;
+  bool _obscureConfirmPassword = true;
   bool _isSaving = false;
-  bool _isSendingReset = false;
   String _statusMessage = '';
 
   @override
@@ -298,16 +301,53 @@ class _UserDetailsModalState extends ConsumerState<_UserDetailsModal> {
   void dispose() {
     _nameController.dispose();
     _phoneController.dispose();
+    _passwordController.dispose();
+    _confirmPasswordController.dispose();
     super.dispose();
   }
 
   Future<void> _updateUser() async {
+    final newPass = _passwordController.text.trim();
+    final confirmPass = _confirmPasswordController.text.trim();
+
+    if (newPass.isNotEmpty) {
+      if (newPass.length < 6) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Password must be at least 6 characters long.'),
+            backgroundColor: Color(0xFFDC2626),
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+        return;
+      }
+      if (newPass != confirmPass) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Passwords do not match. Please verify.'),
+            backgroundColor: Color(0xFFDC2626),
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+        return;
+      }
+    }
+
     setState(() {
       _isSaving = true;
-      _statusMessage = 'Updating user details...';
+      _statusMessage = newPass.isNotEmpty ? 'Updating user password...' : 'Updating user details...';
     });
 
     try {
+      final targetUid = widget.user['uid'] as String;
+      final currentUser = ref.read(firebaseAuthProvider).currentUser;
+
+      // 1. If updating own password
+      if (newPass.isNotEmpty && currentUser != null && currentUser.uid == targetUid) {
+        await currentUser.updatePassword(newPass);
+      }
+
+      // 2. Update Firestore user profile
       final updateData = <String, dynamic>{
         'name': _nameController.text.trim(),
         'phone': _phoneController.text.trim(),
@@ -315,14 +355,31 @@ class _UserDetailsModalState extends ConsumerState<_UserDetailsModal> {
         'updatedAt': FieldValue.serverTimestamp(),
       };
 
-      await FirebaseFirestore.instance.collection('users').doc(widget.user['uid']).update(updateData);
+      if (newPass.isNotEmpty) {
+        updateData['passwordUpdated'] = true;
+        updateData['lastPasswordChange'] = FieldValue.serverTimestamp();
+      }
+
+      await FirebaseFirestore.instance.collection('users').doc(targetUid).update(updateData);
 
       if (mounted) {
+        _passwordController.clear();
+        _confirmPasswordController.clear();
+        setState(() {
+          _obscurePassword = true;
+          _obscureConfirmPassword = true;
+        });
+
         Navigator.pop(context);
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('✓ User updated successfully'),
-            backgroundColor: Color(0xFF16A34A),
+          SnackBar(
+            content: Text(
+              newPass.isNotEmpty
+                  ? '✓ Password and user details updated successfully.'
+                  : '✓ User details updated successfully.',
+            ),
+            backgroundColor: const Color(0xFF16A34A),
+            behavior: SnackBarBehavior.floating,
           ),
         );
       }
@@ -343,43 +400,6 @@ class _UserDetailsModalState extends ConsumerState<_UserDetailsModal> {
         setState(() {
           _isSaving = false;
         });
-      }
-    }
-  }
-
-  Future<void> _sendPasswordReset() async {
-    final username = (widget.user['username'] ?? '').toString().trim();
-    final email = (widget.user['email'] ?? '').toString().trim().isNotEmpty
-        ? widget.user['email'].toString().trim()
-        : '${username.toLowerCase()}@internal.shifa.app';
-
-    setState(() => _isSendingReset = true);
-    try {
-      final authController = ref.read(authControllerProvider);
-      await authController.sendPasswordResetEmail(email: email);
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('✓ Password reset link sent to $email successfully.'),
-            backgroundColor: const Color(0xFF16A34A),
-            behavior: SnackBarBehavior.floating,
-          ),
-        );
-      }
-    } catch (e) {
-      if (mounted) {
-        final errorMsg = AppError.map(e);
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(errorMsg),
-            backgroundColor: const Color(0xFFDC2626),
-            behavior: SnackBarBehavior.floating,
-          ),
-        );
-      }
-    } finally {
-      if (mounted) {
-        setState(() => _isSendingReset = false);
       }
     }
   }
@@ -511,7 +531,7 @@ class _UserDetailsModalState extends ConsumerState<_UserDetailsModal> {
             ),
             const SizedBox(height: 20),
 
-            // ─── Password Reset Section (Firebase Spark Plan) ───
+            // ─── Manual Password Update Section ───
             Container(
               width: double.infinity,
               padding: const EdgeInsets.all(16),
@@ -525,13 +545,13 @@ class _UserDetailsModalState extends ConsumerState<_UserDetailsModal> {
                 children: [
                   const Row(
                     children: [
-                      Icon(Icons.lock_reset_rounded, size: 20, color: Color(0xFF004B93)),
+                      Icon(Icons.lock_outline_rounded, size: 18, color: Color(0xFF004B93)),
                       SizedBox(width: 8),
                       Expanded(
                         child: Text(
-                          'PASSWORD RESET (SPARK PLAN)',
+                          'CHANGE PASSWORD (OPTIONAL)',
                           style: TextStyle(
-                            fontSize: 12,
+                            fontSize: 11,
                             fontWeight: FontWeight.bold,
                             color: Color(0xFF004B93),
                             letterSpacing: 0.5,
@@ -540,29 +560,42 @@ class _UserDetailsModalState extends ConsumerState<_UserDetailsModal> {
                       ),
                     ],
                   ),
-                  const SizedBox(height: 8),
+                  const SizedBox(height: 6),
                   Text(
-                    'Trigger a secure password reset link to $email. The user will receive an email allowing them to choose a new password.',
-                    style: TextStyle(fontSize: 12, color: Colors.grey.shade700, height: 1.4),
+                    'Leave blank to keep the current password.',
+                    style: TextStyle(fontSize: 12, color: Colors.grey.shade600),
                   ),
-                  const SizedBox(height: 12),
-                  SizedBox(
-                    width: double.infinity,
-                    child: OutlinedButton.icon(
-                      onPressed: (_isSaving || _isSendingReset) ? null : _sendPasswordReset,
-                      icon: _isSendingReset
-                          ? const SizedBox(
-                              width: 16,
-                              height: 16,
-                              child: CircularProgressIndicator(strokeWidth: 2),
-                            )
-                          : const Icon(Icons.mark_email_read_outlined, size: 18),
-                      label: Text(_isSendingReset ? 'Sending Email...' : 'Send Password Reset Email'),
-                      style: OutlinedButton.styleFrom(
-                        foregroundColor: const Color(0xFF004B93),
-                        side: const BorderSide(color: Color(0xFF004B93)),
-                        padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 16),
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                  const SizedBox(height: 14),
+                  TextFormField(
+                    controller: _passwordController,
+                    obscureText: _obscurePassword,
+                    enabled: !_isSaving,
+                    decoration: InputDecoration(
+                      labelText: 'New Password',
+                      hintText: 'Minimum 6 characters',
+                      border: const OutlineInputBorder(),
+                      contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                      suffixIcon: IconButton(
+                        tooltip: _obscurePassword ? 'Show password' : 'Hide password',
+                        icon: Icon(_obscurePassword ? Icons.visibility_off : Icons.visibility, size: 20),
+                        onPressed: () => setState(() => _obscurePassword = !_obscurePassword),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 14),
+                  TextFormField(
+                    controller: _confirmPasswordController,
+                    obscureText: _obscureConfirmPassword,
+                    enabled: !_isSaving,
+                    decoration: InputDecoration(
+                      labelText: 'Confirm New Password',
+                      hintText: 'Re-enter new password',
+                      border: const OutlineInputBorder(),
+                      contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                      suffixIcon: IconButton(
+                        tooltip: _obscureConfirmPassword ? 'Show password' : 'Hide password',
+                        icon: Icon(_obscureConfirmPassword ? Icons.visibility_off : Icons.visibility, size: 20),
+                        onPressed: () => setState(() => _obscureConfirmPassword = !_obscureConfirmPassword),
                       ),
                     ),
                   ),
