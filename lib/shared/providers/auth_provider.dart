@@ -90,14 +90,20 @@ final authControllerProvider = Provider<AuthController>((ref) {
   return AuthController(
     auth: ref.watch(firebaseAuthProvider),
     firestore: ref.watch(firestoreProvider),
+    ref: ref,
   );
 });
 
 class AuthController {
   final FirebaseAuth auth;
   final FirebaseFirestore firestore;
+  final Ref? ref;
 
-  AuthController({required this.auth, required this.firestore});
+  AuthController({
+    required this.auth,
+    required this.firestore,
+    this.ref,
+  });
 
   /// Deterministic client-side username-to-email mapping.
   /// E.g. "ADMIN001" -> "admin001@internal.shifa.app"
@@ -110,53 +116,11 @@ class AuthController {
     final lowerUsername = username.trim().toLowerCase();
     final email = _resolveEmail(username);
 
-    // 1. Check user status in Firestore BEFORE signing in (force server query to bypass stale browser cache)
-    QuerySnapshot<Map<String, dynamic>> query;
     try {
-      query = await firestore
-          .collection('users')
-          .where('username', isEqualTo: cleanUsername)
-          .limit(1)
-          .get(const GetOptions(source: Source.server));
-    } catch (_) {
-      query = await firestore
-          .collection('users')
-          .where('username', isEqualTo: cleanUsername)
-          .limit(1)
-          .get();
-    }
-
-    if (query.docs.isEmpty) {
-      try {
-        query = await firestore
-            .collection('users')
-            .where('username', isEqualTo: lowerUsername)
-            .limit(1)
-            .get(const GetOptions(source: Source.server));
-      } catch (_) {
-        query = await firestore
-            .collection('users')
-            .where('username', isEqualTo: lowerUsername)
-            .limit(1)
-            .get();
-      }
-    }
-
-    if (query.docs.isNotEmpty) {
-      final userData = query.docs.first.data();
-      final isDeleted = userData['isDeleted'] == true;
-      final status = (userData['status'] ?? 'active').toString().toLowerCase();
-
-      if (isDeleted || _isDeactivatedStatus(status)) {
-        throw Exception('This account has been deactivated. Please contact your administrator.');
-      }
-    }
-
-    try {
-      // 2. Authenticate with Firebase Auth
+      // 1. Authenticate with Firebase Auth directly using deterministic email
       final credential = await auth.signInWithEmailAndPassword(email: email, password: password);
 
-      // 3. Verify user status in Firestore by UID (Auto-sync UID if Firestore doc exists under username)
+      // 2. Verify user status in Firestore by authenticated UID
       if (credential.user != null) {
         final uid = credential.user!.uid;
         DocumentSnapshot<Map<String, dynamic>> userDoc;
@@ -166,25 +130,18 @@ class AuthController {
           userDoc = await firestore.collection('users').doc(uid).get();
         }
 
-        if (!userDoc.exists && query.docs.isNotEmpty) {
-          // Auto-heal UID discrepancy: Copy document to current Auth UID in Firestore
-          final existingData = query.docs.first.data();
-          await firestore.collection('users').doc(uid).set({
-            ...existingData,
-            'uid': uid,
-            'updatedAt': FieldValue.serverTimestamp(),
-          }, SetOptions(merge: true));
-          userDoc = await firestore.collection('users').doc(uid).get();
-        }
-
-        if (userDoc.exists) {
+        if (userDoc.exists && userDoc.data() != null) {
           final data = userDoc.data()!;
           final isDeleted = data['isDeleted'] == true;
           final status = (data['status'] ?? 'active').toString().toLowerCase();
 
           if (isDeleted || _isDeactivatedStatus(status)) {
+            // Set global error message notifier BEFORE signing out so redirection retains it
+            ref?.read(loginErrorMessageProvider.notifier).setMessage(
+              'Your account has been deactivated. Please contact an administrator.',
+            );
             await auth.signOut();
-            throw Exception('This account has been deactivated. Please contact your administrator.');
+            throw Exception('Your account has been deactivated. Please contact an administrator.');
           }
         }
       }
@@ -224,7 +181,13 @@ class AuthController {
             } catch (_) {}
           }
         }
-        throw Exception(e.code == 'user-not-found' ? 'No account found for that username.' : 'Incorrect password.');
+        if (e.code == 'user-disabled') {
+          ref?.read(loginErrorMessageProvider.notifier).setMessage(
+            'Your account has been deactivated. Please contact an administrator.',
+          );
+          throw Exception('Your account has been deactivated. Please contact an administrator.');
+        }
+        throw Exception(e.code == 'user-not-found' ? 'No account found for that username.' : 'Incorrect password. Please try again.');
       }
       rethrow;
     }
@@ -299,14 +262,14 @@ class AuthController {
     }
   }
 
-  /// Completely deletes or disables a user account from Firestore.
+  /// Completely deletes a user account via Cloud Function (Auth + Firestore).
+  /// Strictly requires Cloud Function execution to prevent orphaned Auth accounts.
   Future<void> deleteUserAccount({required String targetUid}) async {
     final userDoc = await firestore.collection('users').doc(targetUid).get();
     if (!userDoc.exists) return;
 
     final userData = userDoc.data()!;
     final role = (userData['role'] ?? '').toString().toLowerCase();
-    final isHidden = userData['isHidden'] == true;
 
     final isProtected = userData['isInternalAccount'] == true || userData['isHidden'] == true;
 
@@ -331,15 +294,26 @@ class AuthController {
       }
     }
 
-    // Remove Firestore record or mark status as disabled
+    // 3. Call Cloud Function to delete Auth account + Firestore document.
+    // No client-side fallback: ensures Auth and Firestore accounts are deleted together.
     try {
-      await firestore.collection('users').doc(targetUid).delete();
-    } catch (_) {
-      await firestore.collection('users').doc(targetUid).update({
-        'isDeleted': true,
-        'status': 'disabled',
-        'deletedAt': FieldValue.serverTimestamp(),
+      final callable = FirebaseFunctions.instance.httpsCallable('deleteUserAccount');
+      final response = await callable.call<Map<String, dynamic>>({
+        'targetUid': targetUid,
       });
+      if (response.data['success'] != true) {
+        throw Exception('Unable to delete user. Please try again.');
+      }
+    } on FirebaseFunctionsException catch (e) {
+      debugPrint('[deleteUserAccount] Cloud Function exception: ${e.code} - ${e.message}');
+      throw Exception(e.message ?? 'Unable to delete user. Please try again.');
+    } catch (e) {
+      debugPrint('[deleteUserAccount] Cloud Function call failed: $e');
+      if (e is Exception && !e.toString().contains('FirebaseFunctionsException')) {
+        final cleanMsg = e.toString().replaceFirst('Exception: ', '').trim();
+        if (cleanMsg.isNotEmpty) throw Exception(cleanMsg);
+      }
+      throw Exception('Unable to delete user. Please try again.');
     }
   }
 
@@ -465,7 +439,6 @@ class AuthController {
 
     final userData = userDoc.data()!;
     final role = (userData['role'] ?? '').toString().toLowerCase();
-    final isHidden = userData['isHidden'] == true;
 
     final isProtected = userData['isInternalAccount'] == true || userData['isHidden'] == true;
 

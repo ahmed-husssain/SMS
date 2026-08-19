@@ -105,7 +105,7 @@ service cloud.firestore {
     match /scheduled_notifications/{notificationId} {
       allow read: if isAuthenticated();
       allow create, update: if isAuthenticated();
-      allow delete: if isAdmin();
+      allow delete: if isAuthenticated();
     }
   }
 }

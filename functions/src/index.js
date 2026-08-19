@@ -1,4 +1,4 @@
-const { onCall, HttpsError } = require("firebase-functions/v2/https");
+﻿const { onCall, HttpsError } = require("firebase-functions/v2/https");
 const logger = require("firebase-functions/logger");
 const admin = require("firebase-admin");
 
@@ -268,6 +268,104 @@ exports.updateUserPassword = onCall(async (request) => {
   return { success: true };
 });
 
+// 3b. deleteUserAccount
+// Completely removes a user's Firebase Auth account and Firestore document.
+// This prevents orphaned Auth accounts that block username re-use.
+exports.deleteUserAccount = onCall(async (request) => {
+  // Only admins can delete user accounts
+  await checkAdmin(request);
+
+  const { targetUid } = request.data;
+  if (!targetUid || typeof targetUid !== "string") {
+    throw new HttpsError("invalid-argument", "targetUid is required.");
+  }
+
+  const callerUid = request.auth.uid;
+
+  // Prevent self-deletion
+  if (targetUid === callerUid) {
+    throw new HttpsError("permission-denied", "You cannot delete your own account.");
+  }
+
+  logger.info("[deleteUserAccount] Start", { callerUid, targetUid });
+
+  // Stage 1: Read the target user's Firestore document for validation
+  const userDocRef = db.collection("users").doc(targetUid);
+  const userDoc = await userDocRef.get();
+
+  let userName = "Unknown";
+  if (userDoc.exists) {
+    const userData = userDoc.data() || {};
+    userName = userData.name || userData.username || "Unknown";
+
+    // Protect internal accounts
+    if (userData.isInternalAccount === true || userData.isHidden === true) {
+      throw new HttpsError("permission-denied", "This internal account is protected and cannot be deleted.");
+    }
+
+    // Protect last remaining admin
+    const role = (userData.role || "").toLowerCase();
+    if (role === "admin") {
+      const allUsersSnap = await db.collection("users").get();
+      const activeAdminCount = allUsersSnap.docs.filter((doc) => {
+        const d = doc.data();
+        const r = (d.role || "").toLowerCase();
+        const isDeleted = d.isDeleted === true;
+        const status = (d.status || "active").toLowerCase();
+        return !isDeleted && status !== "disabled" && status !== "deactivated" && r === "admin";
+      }).length;
+
+      if (activeAdminCount <= 1) {
+        throw new HttpsError("permission-denied", "Cannot delete this account: At least one active Admin must remain.");
+      }
+    }
+  }
+
+  // Stage 2: Delete Firebase Auth account
+  try {
+    await admin.auth().deleteUser(targetUid);
+    logger.info("[deleteUserAccount] Firebase Auth account deleted", { targetUid });
+  } catch (authError) {
+    // If the auth account doesn't exist, that's fine - continue with Firestore cleanup
+    if (authError.code === "auth/user-not-found") {
+      logger.warn("[deleteUserAccount] Auth account not found, continuing with Firestore cleanup", { targetUid });
+    } else {
+      logger.error("[deleteUserAccount] Failed to delete Auth account", { targetUid, error: authError.message });
+      throw new HttpsError("internal", `Failed to delete Auth account: ${authError.message}`);
+    }
+  }
+
+  // Stage 3: Delete Firestore user document
+  try {
+    await userDocRef.delete();
+    logger.info("[deleteUserAccount] Firestore document deleted", { targetUid });
+  } catch (firestoreError) {
+    logger.error("[deleteUserAccount] Firestore deletion failed", { targetUid, error: firestoreError.message });
+    throw new HttpsError("internal", `Failed to delete user profile from Firestore: ${firestoreError.message}`);
+  }
+
+  // Stage 4: Log activity
+  try {
+    await db.collection("activities").add({
+      userId: callerUid,
+      userName: request.auth.token.name || "Admin",
+      role: "admin",
+      action: "USER_DELETED",
+      entityType: "user",
+      entityId: targetUid,
+      description: `Deleted user account: ${userName}`,
+      organizationId: "default",
+      timestamp: admin.firestore.FieldValue.serverTimestamp(),
+    });
+  } catch (activityError) {
+    logger.warn("[deleteUserAccount] Activity log failed (non-fatal)", { error: activityError.message });
+  }
+
+  logger.info("[deleteUserAccount] Complete", { targetUid });
+  return { success: true };
+});
+
+
 // 4. deletePatient (Soft Delete)
 exports.deletePatient = onCall(async (request) => {
   if (!request.auth) {
@@ -428,6 +526,4 @@ exports.onInvoiceCreated = onDocumentCreated("invoices/{invoiceId}", async (even
     logger.error("Error updating invoice metrics", error);
   }
 });
-
-
 

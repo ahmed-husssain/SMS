@@ -5,6 +5,7 @@ import '../../../../shared/providers/auth_provider.dart';
 import '../../data/invoice_repository.dart';
 import '../invoice_export_page.dart';
 import '../invoice_form_screen.dart';
+import '../../../patients/data/patient_repository.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import '../widgets/invoice_details_dialog.dart';
 
@@ -19,6 +20,18 @@ final recentInvoiceHighlightProvider = NotifierProvider<RecentInvoiceHighlightNo
   RecentInvoiceHighlightNotifier.new,
 );
 
+class InvoiceSearchQueryNotifier extends Notifier<String> {
+  @override
+  String build() => '';
+
+  void setQuery(String query) => state = query.trim();
+  void clear() => state = '';
+}
+
+final invoiceSearchQueryProvider = NotifierProvider<InvoiceSearchQueryNotifier, String>(
+  InvoiceSearchQueryNotifier.new,
+);
+
 class InvoicesPage extends ConsumerStatefulWidget {
   const InvoicesPage({super.key});
 
@@ -27,10 +40,32 @@ class InvoicesPage extends ConsumerStatefulWidget {
 }
 
 class _InvoicesPageState extends ConsumerState<InvoicesPage> {
+  late final TextEditingController _searchController;
+
+  @override
+  void initState() {
+    super.initState();
+    _searchController = TextEditingController(text: ref.read(invoiceSearchQueryProvider));
+  }
+
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
+  }
+
   @override
   Widget build(BuildContext context) {
     final role = ref.watch(userProfileProvider.select((v) => v.value?['role'] ?? 'staff'));
     final highlightId = ref.watch(recentInvoiceHighlightProvider);
+    final rawSearchQuery = ref.watch(invoiceSearchQueryProvider);
+    final searchQuery = rawSearchQuery.toLowerCase();
+
+    ref.listen<String>(invoiceSearchQueryProvider, (prev, next) {
+      if (_searchController.text != next) {
+        _searchController.text = next;
+      }
+    });
 
     if (highlightId != null) {
       Future.delayed(const Duration(seconds: 5), () {
@@ -43,6 +78,14 @@ class _InvoicesPageState extends ConsumerState<InvoicesPage> {
     final invoicesAsync = role == 'admin'
         ? ref.watch(allInvoicesProvider(false))
         : ref.watch(staffInvoicesProvider);
+
+    final patientsAsync = role == 'admin'
+        ? ref.watch(allPatientsProvider(true))
+        : ref.watch(staffPatientsProvider);
+
+    final patientMap = {
+      for (final p in (patientsAsync.value ?? [])) p.patientId: p,
+    };
 
     return Scaffold(
       backgroundColor: const Color(0xFFFFFFFF),
@@ -89,7 +132,59 @@ class _InvoicesPageState extends ConsumerState<InvoicesPage> {
                 ),
               ],
             ),
-            const SizedBox(height: 24),
+            const SizedBox(height: 14),
+
+            // ─── Instant Multi-Field Invoice Search Bar ───
+            Container(
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(10),
+                boxShadow: const [
+                  BoxShadow(
+                    color: Color(0x0A000000),
+                    blurRadius: 8,
+                    offset: Offset(0, 2),
+                  ),
+                ],
+              ),
+              child: TextField(
+                controller: _searchController,
+                style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w500),
+                decoration: InputDecoration(
+                  hintText: 'Search by Invoice #, MR #, Patient Name, or Status (paid/partial)...',
+                  hintStyle: TextStyle(fontSize: 13, color: Colors.grey.shade400),
+                  prefixIcon: const Icon(Icons.search, color: Color(0xFF1565C0), size: 22),
+                  suffixIcon: rawSearchQuery.isNotEmpty
+                      ? IconButton(
+                          icon: const Icon(Icons.clear, size: 18, color: Colors.grey),
+                          onPressed: () {
+                            _searchController.clear();
+                            ref.read(invoiceSearchQueryProvider.notifier).clear();
+                          },
+                        )
+                      : null,
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(10),
+                    borderSide: BorderSide(color: Colors.grey.shade300),
+                  ),
+                  enabledBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(10),
+                    borderSide: BorderSide(color: Colors.grey.shade300),
+                  ),
+                  focusedBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(10),
+                    borderSide: const BorderSide(color: Color(0xFF1565C0), width: 1.5),
+                  ),
+                  contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                  isDense: true,
+                ),
+                onChanged: (val) {
+                  ref.read(invoiceSearchQueryProvider.notifier).setQuery(val);
+                },
+              ),
+            ),
+            const SizedBox(height: 16),
+
             Expanded(
               child: invoicesAsync.when(
                 data: (invoices) {
@@ -110,6 +205,56 @@ class _InvoicesPageState extends ConsumerState<InvoicesPage> {
                       ),
                     );
                   }
+
+                  final filteredInvoices = invoices.where((inv) {
+                    if (searchQuery.isEmpty) return true;
+
+                    final invNum = inv.invoiceNumber.toLowerCase();
+                    final pId = inv.patientId.toLowerCase();
+                    final p = patientMap[inv.patientId];
+                    final mrNum = (p?.mrNumber ?? '').toLowerCase();
+                    final pName = (p?.patientName ?? '').toLowerCase();
+                    final status = inv.paymentStatus.toLowerCase();
+
+                    return invNum.contains(searchQuery) ||
+                        pId.contains(searchQuery) ||
+                        mrNum.contains(searchQuery) ||
+                        pName.contains(searchQuery) ||
+                        status.contains(searchQuery);
+                  }).toList();
+
+                  if (filteredInvoices.isEmpty) {
+                    return Center(
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(vertical: 40.0),
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            const Icon(Icons.search_off_rounded, size: 44, color: Colors.grey),
+                            const SizedBox(height: 10),
+                            Text(
+                              'No invoices found for "$rawSearchQuery"',
+                              textAlign: TextAlign.center,
+                              style: const TextStyle(
+                                fontSize: 13,
+                                fontWeight: FontWeight.bold,
+                                color: Color(0xFF475569),
+                              ),
+                            ),
+                            const SizedBox(height: 8),
+                            TextButton(
+                              onPressed: () {
+                                _searchController.clear();
+                                ref.read(invoiceSearchQueryProvider.notifier).clear();
+                              },
+                              child: const Text('Clear Search Filter'),
+                            ),
+                          ],
+                        ),
+                      ),
+                    );
+                  }
+
                   return LayoutBuilder(
                     builder: (context, constraints) {
                       final minTableWidth = constraints.maxWidth < 580 ? 580.0 : constraints.maxWidth;
@@ -147,10 +292,10 @@ class _InvoicesPageState extends ConsumerState<InvoicesPage> {
                                 // Table Body
                                 Expanded(
                                   child: ListView.separated(
-                                    itemCount: invoices.length,
+                                    itemCount: filteredInvoices.length,
                                     separatorBuilder: (context, index) => const Divider(height: 1, thickness: 1, color: Color(0xFFEEEEEE)),
                                     itemBuilder: (context, index) {
-                                      final inv = invoices[index];
+                                      final inv = filteredInvoices[index];
                                       final isRecent = (highlightId != null && (inv.invoiceId == highlightId || inv.invoiceNumber == highlightId));
 
                                       return AnimatedContainer(

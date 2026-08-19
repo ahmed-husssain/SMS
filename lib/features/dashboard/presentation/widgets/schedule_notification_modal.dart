@@ -53,7 +53,12 @@ class _ScheduleNotificationModalState extends ConsumerState<ScheduleNotification
   }
 
   Future<void> _saveNotification() async {
-    final patientsAsync = ref.read(allPatientsProvider(false));
+    final profile = ref.read(userProfileProvider).value;
+    final role = profile?['role'] ?? 'staff';
+
+    final patientsAsync = role == 'admin'
+        ? ref.read(allPatientsProvider(false))
+        : ref.read(staffPatientsProvider);
     final patients = (patientsAsync.value ?? []).where((p) => !p.isDiscontinued).toList();
 
     Patient? selectedPatient = widget.preSelectedPatient;
@@ -130,7 +135,12 @@ class _ScheduleNotificationModalState extends ConsumerState<ScheduleNotification
 
   @override
   Widget build(BuildContext context) {
-    final patientsAsync = ref.watch(allPatientsProvider(false));
+    final profile = ref.watch(userProfileProvider).value;
+    final role = profile?['role'] ?? 'staff';
+
+    final patientsAsync = role == 'admin'
+        ? ref.watch(allPatientsProvider(false))
+        : ref.watch(staffPatientsProvider);
     final patients = (patientsAsync.value ?? []).where((p) => !p.isDiscontinued).toList();
 
     final preSelected = widget.preSelectedPatient;

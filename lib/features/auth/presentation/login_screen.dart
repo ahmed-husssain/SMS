@@ -22,12 +22,10 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
     if (!_formKey.currentState!.validate()) return;
 
     ref.read(loginErrorMessageProvider.notifier).setMessage(null);
-    if (mounted) {
-      setState(() {
-        _isLoading = true;
-        _errorMessage = null;
-      });
-    }
+    setState(() {
+      _isLoading = true;
+      _errorMessage = null;
+    });
 
     try {
       final authController = ref.read(authControllerProvider);
@@ -35,17 +33,15 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
         _usernameController.text.trim(),
         _passwordController.text,
       );
-      if (mounted) {
-        ref.read(splashCompletedProvider.notifier).setCompleted(false);
-      }
+      if (!mounted) return;
+      ref.read(splashCompletedProvider.notifier).setCompleted(false);
     } catch (e) {
-      if (mounted) {
-        final msg = AppError.map(e);
-        ref.read(loginErrorMessageProvider.notifier).setMessage(msg);
-        setState(() {
-          _errorMessage = msg;
-        });
-      }
+      if (!mounted) return;
+      final msg = AppError.map(e);
+      ref.read(loginErrorMessageProvider.notifier).setMessage(msg);
+      setState(() {
+        _errorMessage = msg;
+      });
     } finally {
       if (mounted) {
         setState(() {
@@ -278,6 +274,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                               child: _isLoading
                                   ? const CircularProgressIndicator(color: Colors.white)
                                   : const Row(
+                                      mainAxisSize: MainAxisSize.min,
                                       mainAxisAlignment: MainAxisAlignment.center,
                                       children: [
                                         Text(

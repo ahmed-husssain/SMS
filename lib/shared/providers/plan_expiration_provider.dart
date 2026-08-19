@@ -3,7 +3,6 @@ import 'package:intl/intl.dart';
 import '../../features/patients/data/patient_repository.dart';
 import '../../features/patients/domain/patient_model.dart';
 import '../../features/invoices/data/invoice_repository.dart';
-import '../../features/invoices/domain/invoice_model.dart';
 import '../../features/dashboard/domain/scheduled_notification_model.dart';
 import '../../features/dashboard/data/scheduled_notification_repository.dart';
 import 'auth_provider.dart';
@@ -131,6 +130,7 @@ final expiringPlansProvider = StreamProvider<List<ExpiringPatientPlan>>((ref) {
             patientAmount: 0,
             staffPayment: 0,
             profit: 0,
+            days: 0,
             assignedStaffId: '',
             organizationId: 'default',
             createdBy: rem.createdBy,

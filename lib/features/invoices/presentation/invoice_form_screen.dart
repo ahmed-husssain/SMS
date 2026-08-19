@@ -13,25 +13,24 @@ import '../domain/invoice_model.dart';
 import '../data/invoice_repository.dart';
 import '../utils/invoice_exporter.dart';
 import 'pages/invoices_page.dart';
-import 'package:go_router/go_router.dart';
 import '../../../shared/providers/auth_provider.dart';
 import '../../patients/domain/patient_model.dart';
 import '../../patients/data/patient_repository.dart';
 
 const Map<String, double> SERVICE_PRICES = {
   "SELECT SERVICE": 0,
-  "Online Doctor Consultation": 0,
-  "Home Physiotherapy": 3000,
-  "Home Physiotherapy Services": 3000,
-  "Home Nursing Care": 3000,
-  "Home Nursing Care Services": 3000,
-  "Home Attendant Care": 2000,
-  "Home Attendant Service": 2000,
-  "Home Nurse Visit": 2000,
-  "Home NG Tube Insertion": 2500,
-  "Wound & Bedsores Care": 2000,
-  "Wound & Bed Sore Dressing": 2000,
-  "Home ICU Nurse": 3500,
+"Online Doctor Consultation": 0,
+"Home Physiotherapy": 3000,
+"Home Physiotherapy Services": 3000,
+"Home Nursing Care": 3000,
+"Home Nursing Care Services": 3000,
+"Home Attendant Care": 2000,
+"Home Attendant Service": 2000,
+"Home Nurse Visit": 2000,
+"Home NG Tube Insertion": 2500,
+"Wound & Bedsores Care": 2000,
+"Wound & Bed Sore Dressing": 2000,
+"Home ICU Nurse": 3500,
   "Home ICU Nurse Setup": 3500,
   "Medical Equipment": 0,
   "Medical Equipment Rental": 0,
@@ -274,6 +273,7 @@ class _InvoiceFormScreenState extends ConsumerState<InvoiceFormScreen> {
   }
 
   void _populatePatientData(Patient p, {int defaultDays = 15}) {
+    final effectiveDays = p.days > 0 ? p.days : defaultDays;
     setState(() {
       _patient = p;
       _mrNumberController.text = p.mrNumber;
@@ -283,9 +283,9 @@ class _InvoiceFormScreenState extends ConsumerState<InvoiceFormScreen> {
       _cnicController.text = p.cnic;
       _isSearchingPatient = false;
 
-      _toDate = _fromDate.add(Duration(days: defaultDays));
+      _toDate = _fromDate.add(Duration(days: effectiveDays));
 
-      // Automatically populate invoice items with patient's registered services (15-days calculation)
+      // Automatically populate invoice items with patient's registered services
       _items.clear();
       if (p.selectedServices.isNotEmpty) {
         for (final s in p.selectedServices) {
@@ -303,7 +303,7 @@ class _InvoiceFormScreenState extends ConsumerState<InvoiceFormScreen> {
             _items.add(InvoiceItem(
               serviceName: sName,
               price: price,
-              quantity: defaultDays, // 15 days calculation
+              quantity: effectiveDays,
             ));
           }
         }
@@ -311,20 +311,20 @@ class _InvoiceFormScreenState extends ConsumerState<InvoiceFormScreen> {
 
       // If no selectedServices array exists but patientAmount is set, add fallback item
       if (_items.isEmpty && p.patientAmount > 0) {
-        final dailyPrice = (p.patientAmount / defaultDays).roundToDouble();
+        final dailyPrice = (p.patientAmount / effectiveDays).roundToDouble();
         _items.add(InvoiceItem(
           serviceName: 'Patient Healthcare Service',
           price: dailyPrice > 0 ? dailyPrice : p.patientAmount,
-          quantity: defaultDays,
+          quantity: effectiveDays,
         ));
       }
 
       // If still empty, add default blank service row
       if (_items.isEmpty) {
-        _items.add(InvoiceItem(serviceName: '', price: 0, quantity: defaultDays));
+        _items.add(InvoiceItem(serviceName: '', price: 0, quantity: effectiveDays));
       }
 
-      _searchStatusMessage = '✓ Loaded patient ${p.patientName} & calculated for $defaultDays days (${_items.length} service(s))';
+      _searchStatusMessage = '✓ Loaded patient ${p.patientName} & calculated for $effectiveDays days (${_items.length} service(s))';
     });
   }
 
@@ -350,7 +350,7 @@ class _InvoiceFormScreenState extends ConsumerState<InvoiceFormScreen> {
     });
   }
 
-  double get _subtotal => _items.fold(0, (sum, item) => sum + item.total);
+  double get _subtotal => _items.fold(0.0, (acc, item) => acc + item.total);
   double get _grandTotal => _subtotal - _discount;
 
   Future<void> _submit(String format) async {
@@ -402,6 +402,7 @@ class _InvoiceFormScreenState extends ConsumerState<InvoiceFormScreen> {
           patientAmount: 0,
           staffPayment: 0,
           profit: 0,
+          days: 0,
           assignedStaffId: user.uid,
           organizationId: 'default',
           createdBy: user.uid,
@@ -430,6 +431,7 @@ class _InvoiceFormScreenState extends ConsumerState<InvoiceFormScreen> {
           patientAmount: _patient!.patientAmount,
           staffPayment: _patient!.staffPayment,
           profit: _patient!.profit,
+          days: _patient!.days,
           assignedStaffId: _patient!.assignedStaffId,
           organizationId: _patient!.organizationId,
           createdBy: _patient!.createdBy,
@@ -443,6 +445,20 @@ class _InvoiceFormScreenState extends ConsumerState<InvoiceFormScreen> {
       final profile = ref.read(userProfileProvider).value;
       final userName = profile?['name'] ?? profile?['username'] ?? 'Staff User';
       final userRole = profile?['role'] ?? 'staff';
+
+      int invoiceDays = 0;
+      if (_items.isNotEmpty && _items.first.quantity > 0) {
+        invoiceDays = _items.first.quantity;
+      } else {
+        final dateDiff = _toDate.difference(_fromDate).inDays;
+        if (dateDiff > 0) {
+          invoiceDays = dateDiff;
+        } else if (_patient != null && _patient!.days > 0) {
+          invoiceDays = _patient!.days;
+        } else {
+          invoiceDays = widget.defaultDays;
+        }
+      }
 
       final invoice = Invoice(
         invoiceId: '',
@@ -465,6 +481,7 @@ class _InvoiceFormScreenState extends ConsumerState<InvoiceFormScreen> {
         paymentStatus: _paymentStatus,
         fromDate: _fromDate,
         toDate: _toDate,
+        days: invoiceDays,
       );
 
       final newDocId = await repo.createInvoice(invoice, userName: userName);

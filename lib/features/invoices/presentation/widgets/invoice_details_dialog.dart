@@ -152,6 +152,7 @@ class _InvoiceDetailsDialogState extends ConsumerState<InvoiceDetailsDialog> {
           patientAmount: _patient!.patientAmount,
           staffPayment: _patient!.staffPayment,
           profit: _patient!.profit,
+          days: _patient!.days,
           assignedStaffId: _patient!.assignedStaffId,
           organizationId: _patient!.organizationId,
           createdBy: _patient!.createdBy,
@@ -193,6 +194,7 @@ class _InvoiceDetailsDialogState extends ConsumerState<InvoiceDetailsDialog> {
         paymentStatus: _paymentStatus,
         fromDate: widget.invoice.fromDate,
         toDate: widget.invoice.toDate,
+        days: widget.invoice.days,
         createdByName: widget.invoice.createdByName,
         createdByRole: widget.invoice.createdByRole,
         createdByUid: widget.invoice.createdByUid,
@@ -362,6 +364,8 @@ class _InvoiceDetailsDialogState extends ConsumerState<InvoiceDetailsDialog> {
           _buildInfoRow('Service From', DateFormat('dd/MM/yyyy').format(widget.invoice.fromDate!)),
         if (widget.invoice.toDate != null)
           _buildInfoRow('Service To', DateFormat('dd/MM/yyyy').format(widget.invoice.toDate!)),
+        if (widget.invoice.days > 0)
+          _buildInfoRow('Service Days', '${widget.invoice.days} Days'),
         _buildInfoRow('Payment Status', widget.invoice.paymentStatus.toUpperCase(), 
           valueColor: widget.invoice.paymentStatus.trim().toLowerCase() == 'paid' ? Colors.green.shade700 : Colors.red.shade700),
         _buildInfoRow('Created By', _creatorName),

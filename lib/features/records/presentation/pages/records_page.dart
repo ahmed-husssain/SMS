@@ -1,11 +1,13 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 import '../../../../shared/providers/auth_provider.dart';
 import '../../../patients/data/patient_repository.dart';
 import '../../../patients/presentation/patient_form_screen.dart';
 import '../../../patients/domain/patient_model.dart';
 import '../../../invoices/presentation/invoice_form_screen.dart';
+import '../../../invoices/presentation/pages/invoices_page.dart';
 import '../../../dashboard/presentation/widgets/schedule_notification_modal.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:intl/intl.dart';
@@ -54,15 +56,42 @@ class _RecordsPageState extends ConsumerState<RecordsPage> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            FittedBox(
-              fit: BoxFit.scaleDown,
-              alignment: Alignment.centerLeft,
-              child: Text(
-                'Patient Records',
-                style: Theme.of(
-                  context,
-                ).textTheme.headlineMedium?.copyWith(fontWeight: FontWeight.bold),
-              ),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Expanded(
+                  child: FittedBox(
+                    fit: BoxFit.scaleDown,
+                    alignment: Alignment.centerLeft,
+                    child: Text(
+                      'Patient Records',
+                      style: Theme.of(
+                        context,
+                      ).textTheme.headlineMedium?.copyWith(fontWeight: FontWeight.bold),
+                    ),
+                  ),
+                ),
+                ElevatedButton.icon(
+                  onPressed: () {
+                    Navigator.of(
+                      context,
+                    ).push(MaterialPageRoute(builder: (_) => const PatientFormScreen()));
+                  },
+                  icon: const Icon(Icons.person_add, size: 18),
+                  label: const Text(
+                    'Add Patient',
+                    style: TextStyle(fontWeight: FontWeight.bold),
+                  ),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFF1565C0),
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                  ),
+                ),
+              ],
             ),
             const SizedBox(height: 12),
 
@@ -429,15 +458,6 @@ class _RecordsPageState extends ConsumerState<RecordsPage> {
           ],
         ),
       ),
-      floatingActionButton: FloatingActionButton.extended(
-        onPressed: () {
-          Navigator.of(
-            context,
-          ).push(MaterialPageRoute(builder: (_) => const PatientFormScreen()));
-        },
-        icon: const Icon(Icons.person_add),
-        label: const Text('Add Patient'),
-      ),
     );
   }
 
@@ -552,6 +572,18 @@ class _PatientDetailsModal extends ConsumerWidget {
               ),
               Row(
                 children: [
+                  _ActionIconButton(
+                    icon: Icons.manage_search_rounded,
+                    color: const Color(0xFF004B93),
+                    tooltip: 'Search Invoices',
+                    onPressed: () {
+                      ref.read(invoiceSearchQueryProvider.notifier).setQuery(
+                            patient.mrNumber.isNotEmpty ? patient.mrNumber : patient.patientId,
+                          );
+                      Navigator.pop(context);
+                      context.go('/invoices');
+                    },
+                  ),
                   _ActionIconButton(
                     icon: Icons.description_outlined,
                     color: Colors.orange.shade600,

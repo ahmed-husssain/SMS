@@ -50,18 +50,34 @@ class FinancesPage extends ConsumerWidget {
       data: (patients) {
         final activePatients = patients.where((p) => !p.isDiscontinued).toList();
         final invoices = invoicesAsync.value ?? [];
+        final patientMap = {for (final p in patients) p.patientId: p};
+
         double totalRevenue = 0;
         double totalPayout = 0;
         double totalProfit = 0;
 
         for (final p in activePatients) {
-          totalPayout += p.staffPayment;
+          totalRevenue += p.patientAmount;
         }
 
-        // Add revenue strictly from Paid invoices (includes both staff- and admin-created)
+        // Calculate staff expenditure from all valid invoices (both Paid and Unpaid)
         for (final inv in invoices) {
-          if (!inv.isDiscontinued && !inv.isDeleted && inv.paymentStatus.trim().toLowerCase() == 'paid') {
-            totalRevenue += inv.grandTotal;
+          if (!inv.isDiscontinued && !inv.isDeleted) {
+            final patient = patientMap[inv.patientId];
+            double staffDailyRate = 0.0;
+            if (patient != null && patient.staffPayment > 0) {
+              final pDays = patient.days > 0 ? patient.days : 30;
+              staffDailyRate = patient.staffPayment / pDays;
+            }
+
+            final invoiceDays = inv.days > 0
+                ? inv.days
+                : (inv.items.isNotEmpty && inv.items.first.quantity > 0
+                    ? inv.items.first.quantity
+                    : (inv.toDate != null && inv.fromDate != null
+                        ? inv.toDate!.difference(inv.fromDate!).inDays
+                        : 1));
+            totalPayout += invoiceDays * staffDailyRate;
           }
         }
 
@@ -167,18 +183,34 @@ class FinancesPage extends ConsumerWidget {
       data: (patients) {
         final activePatients = patients.where((p) => !p.isDiscontinued).toList();
         final invoices = invoicesAsync.value ?? [];
+        final patientMap = {for (final p in patients) p.patientId: p};
+
         double totalRevenue = 0;
         double totalPayout = 0;
         double totalProfit = 0;
 
         for (final p in activePatients) {
-          totalPayout += p.staffPayment;
+          totalRevenue += p.patientAmount;
         }
 
-        // Add revenue strictly from this staff member's Paid invoices
+        // Calculate staff expenditure from this staff member's valid invoices (Paid and Unpaid)
         for (final inv in invoices) {
-          if (!inv.isDiscontinued && !inv.isDeleted && inv.paymentStatus.trim().toLowerCase() == 'paid') {
-            totalRevenue += inv.grandTotal;
+          if (!inv.isDiscontinued && !inv.isDeleted) {
+            final patient = patientMap[inv.patientId];
+            double staffDailyRate = 0.0;
+            if (patient != null && patient.staffPayment > 0) {
+              final pDays = patient.days > 0 ? patient.days : 30;
+              staffDailyRate = patient.staffPayment / pDays;
+            }
+
+            final invoiceDays = inv.days > 0
+                ? inv.days
+                : (inv.items.isNotEmpty && inv.items.first.quantity > 0
+                    ? inv.items.first.quantity
+                    : (inv.toDate != null && inv.fromDate != null
+                        ? inv.toDate!.difference(inv.fromDate!).inDays
+                        : 1));
+            totalPayout += invoiceDays * staffDailyRate;
           }
         }
 

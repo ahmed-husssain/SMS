@@ -36,34 +36,6 @@ class CnicInputFormatter extends TextInputFormatter {
   }
 }
 
-class PakistaniPhoneInputFormatter extends TextInputFormatter {
-  @override
-  TextEditingValue formatEditUpdate(
-    TextEditingValue oldValue,
-    TextEditingValue newValue,
-  ) {
-    final text = newValue.text.replaceAll(RegExp(r'\D'), '');
-
-    if (text.isEmpty) {
-      return newValue.copyWith(text: '', selection: const TextSelection.collapsed(offset: 0));
-    }
-
-    final buffer = StringBuffer();
-    for (int i = 0; i < text.length && i < 11; i++) {
-      if (i == 4) {
-        buffer.write('-');
-      }
-      buffer.write(text[i]);
-    }
-
-    final formatted = buffer.toString();
-    return TextEditingValue(
-      text: formatted,
-      selection: TextSelection.collapsed(offset: formatted.length),
-    );
-  }
-}
-
 class PatientFormScreen extends ConsumerStatefulWidget {
   final Patient? existingPatient;
 
@@ -99,6 +71,7 @@ class _PatientFormScreenState extends ConsumerState<PatientFormScreen> {
   // Financial fields
   late TextEditingController _patientAmountController;
   late TextEditingController _staffPaymentController;
+  late TextEditingController _daysController;
 
   List<Map<String, dynamic>> _selectedServices = [];
   double _monthlyServiceCost = 0.0;
@@ -121,12 +94,14 @@ class _PatientFormScreenState extends ConsumerState<PatientFormScreen> {
     
     _patientAmountController = TextEditingController(text: (p != null && p.patientAmount > 0) ? p.patientAmount.toString() : '');
     _staffPaymentController = TextEditingController(text: (p != null && p.staffPayment > 0) ? p.staffPayment.toString() : '');
+    _daysController = TextEditingController(text: (p != null && p.days > 0) ? p.days.toString() : '');
     
     _selectedServices = p?.selectedServices ?? [];
     _monthlyServiceCost = p?.monthlyServiceCost ?? 0.0;
     
     _patientAmountController.addListener(() => setState(() {}));
     _staffPaymentController.addListener(() => setState(() {}));
+    _daysController.addListener(() => setState(() {}));
     
     if (widget.existingPatient == null) {
       // Defer loading to allow context/ref to be fully available
@@ -161,6 +136,7 @@ class _PatientFormScreenState extends ConsumerState<PatientFormScreen> {
     _caretakerController.dispose();
     _patientAmountController.dispose();
     _staffPaymentController.dispose();
+    _daysController.dispose();
     _nameFocusNode.dispose();
     _cnicFocusNode.dispose();
     _phoneFocusNode.dispose();
@@ -195,12 +171,12 @@ class _PatientFormScreenState extends ConsumerState<PatientFormScreen> {
         return;
       }
       final cnicVal = _cnicController.text.trim();
-      if (cnicVal.isEmpty || !RegExp(r'^\d{5}-\d{7}-\d{1}$').hasMatch(cnicVal)) {
+      if (cnicVal.isNotEmpty && !RegExp(r'^\d{5}-\d{7}-\d{1}$').hasMatch(cnicVal)) {
         _scrollToAndFocus(_cnicKey, _cnicFocusNode);
         return;
       }
       final phoneVal = _phoneController.text.trim();
-      if (phoneVal.isEmpty || !RegExp(r'^03\d{2}-\d{7}$').hasMatch(phoneVal)) {
+      if (phoneVal.isEmpty || !RegExp(r'^\d{1,15}$').hasMatch(phoneVal)) {
         _scrollToAndFocus(_phoneKey, _phoneFocusNode);
         return;
       }
@@ -237,6 +213,7 @@ class _PatientFormScreenState extends ConsumerState<PatientFormScreen> {
         patientAmount: double.tryParse(_patientAmountController.text) ?? 0.0,
         staffPayment: double.tryParse(_staffPaymentController.text) ?? 0.0,
         profit: _netProfit,
+        days: int.tryParse(_daysController.text.trim()) ?? 0,
         assignedStaffId: isEditing ? widget.existingPatient!.assignedStaffId : user.uid,
         organizationId: 'default',
         createdBy: isEditing ? widget.existingPatient!.createdBy : user.uid,
@@ -269,6 +246,7 @@ class _PatientFormScreenState extends ConsumerState<PatientFormScreen> {
           patientAmount: patient.patientAmount,
           staffPayment: patient.staffPayment,
           profit: patient.profit,
+          days: patient.days,
           assignedStaffId: patient.assignedStaffId,
           organizationId: patient.organizationId,
           createdBy: patient.createdBy,
@@ -333,7 +311,7 @@ class _PatientFormScreenState extends ConsumerState<PatientFormScreen> {
                       _buildField(
                         _cnicController, 
                         'CNIC (XXXXX-XXXXXXX-X)', 
-                        required: true,
+                        required: false,
                         focusNode: _cnicFocusNode,
                         fieldKey: _cnicKey,
                         inputFormatters: [
@@ -341,27 +319,29 @@ class _PatientFormScreenState extends ConsumerState<PatientFormScreen> {
                           CnicInputFormatter(),
                         ],
                         validator: (v) {
-                          if (v == null || v.isEmpty) return 'CNIC is required';
+                          if (v == null || v.trim().isEmpty) return null;
                           final regExp = RegExp(r'^\d{5}-\d{7}-\d{1}$');
-                          if (!regExp.hasMatch(v)) return 'Invalid CNIC format';
+                          if (!regExp.hasMatch(v.trim())) return 'Invalid CNIC format';
                           return null;
-                        }
+                        },
                       ),
                       _buildField(
                         _phoneController,
-                        'Mobile Number (03XX-XXXXXXX)',
+                        'Mobile Number',
                         required: true,
                         isPhone: true,
                         focusNode: _phoneFocusNode,
                         fieldKey: _phoneKey,
                         inputFormatters: [
                           FilteringTextInputFormatter.digitsOnly,
-                          PakistaniPhoneInputFormatter(),
+                          LengthLimitingTextInputFormatter(15),
                         ],
                         validator: (v) {
-                          if (v == null || v.isEmpty) return 'Mobile Number is required';
-                          final regExp = RegExp(r'^03\d{2}-\d{7}$');
-                          if (!regExp.hasMatch(v)) return 'Invalid phone format (e.g. 0300-1234567)';
+                          final trimmed = v?.trim() ?? '';
+                          if (trimmed.isEmpty) return 'Mobile Number is required';
+                          if (!RegExp(r'^\d{1,15}$').hasMatch(trimmed)) {
+                            return 'Mobile number must contain 1-15 digits only';
+                          }
                           return null;
                         },
                       ),
@@ -429,6 +409,22 @@ class _PatientFormScreenState extends ConsumerState<PatientFormScreen> {
                             ),
                           ),
                         ],
+                      ),
+                      const SizedBox(height: 12),
+                      _buildField(
+                        _daysController,
+                        'Days',
+                        isNumber: true,
+                        inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+                        validator: (v) {
+                          if (v != null && v.trim().isNotEmpty) {
+                            final n = int.tryParse(v.trim());
+                            if (n == null || n <= 0) {
+                              return 'Please enter a valid positive number of days';
+                            }
+                          }
+                          return null;
+                        },
                       ),
                       const Divider(),
                       Padding(

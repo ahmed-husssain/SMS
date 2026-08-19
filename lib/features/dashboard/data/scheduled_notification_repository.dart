@@ -51,78 +51,21 @@ class ScheduledNotificationRepository {
       'isCompleted': false,
     };
 
-    // 1. Save directly in standalone scheduled_notifications collection in Firestore
-    try {
-      await docRef.set(reminderMap);
-    } catch (e) {
-      print('Error saving to scheduled_notifications collection: $e');
-    }
-
-    // 2. Also save in patient document array for backup sync
-    if (notification.patientId.isNotEmpty) {
-      try {
-        await _firestore.collection('patients').doc(notification.patientId).set({
-          'scheduledReminders': FieldValue.arrayUnion([reminderMap]),
-        }, SetOptions(merge: true));
-      } catch (e) {
-        print('Error updating patient scheduledReminders: $e');
-      }
-    }
+    // Save directly in standalone scheduled_notifications collection in Firestore
+    await docRef.set(reminderMap);
   }
 
   Future<void> markAsCompleted(String patientId, String reminderId) async {
-    // 1. Update standalone scheduled_notifications collection
     try {
       await _firestore.collection('scheduled_notifications').doc(reminderId).update({
         'isCompleted': true,
       });
     } catch (_) {}
-
-    // 2. Update patient document array
-    if (patientId.isNotEmpty) {
-      try {
-        final docRef = _firestore.collection('patients').doc(patientId);
-        final doc = await docRef.get();
-        if (doc.exists) {
-          final data = doc.data();
-          if (data != null && data['scheduledReminders'] is List) {
-            final list = List<Map<String, dynamic>>.from(
-              (data['scheduledReminders'] as List).map((x) => Map<String, dynamic>.from(x as Map)),
-            );
-            for (final item in list) {
-              if ((item['id'] ?? '').toString() == reminderId) {
-                item['isCompleted'] = true;
-              }
-            }
-            await docRef.set({'scheduledReminders': list}, SetOptions(merge: true));
-          }
-        }
-      } catch (_) {}
-    }
   }
 
   Future<void> deleteScheduledNotification(String patientId, String reminderId) async {
-    // 1. Delete from standalone scheduled_notifications collection
     try {
       await _firestore.collection('scheduled_notifications').doc(reminderId).delete();
     } catch (_) {}
-
-    // 2. Remove from patient document array
-    if (patientId.isNotEmpty) {
-      try {
-        final docRef = _firestore.collection('patients').doc(patientId);
-        final doc = await docRef.get();
-        if (doc.exists) {
-          final data = doc.data();
-          if (data != null && data['scheduledReminders'] is List) {
-            final list = List<Map<String, dynamic>>.from(
-              (data['scheduledReminders'] as List).map((x) => Map<String, dynamic>.from(x as Map)),
-            );
-            list.removeWhere((item) => (item['id'] ?? '').toString() == reminderId);
-            await docRef.set({'scheduledReminders': list}, SetOptions(merge: true));
-          }
-        }
-      } catch (_) {}
-    }
   }
 }

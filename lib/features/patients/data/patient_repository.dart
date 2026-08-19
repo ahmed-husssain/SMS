@@ -78,7 +78,7 @@ class PatientRepository {
     await _firestore.collection('patients').doc(patient.patientId).update(patient.toMap());
   }
 
-  /// Soft-delete a patient (client-side, replaces deletePatient Cloud Function)
+  /// Soft-delete a patient and all their associated invoices
   Future<void> softDeletePatient({
     required String patientId,
     required String patientName,
@@ -93,10 +93,25 @@ class PatientRepository {
       'deletedBy': userId,
     });
 
+    // Soft-delete all associated invoices
+    final invoicesSnap = await _firestore
+        .collection('invoices')
+        .where('patientId', isEqualTo: patientId)
+        .get();
+
+    for (final doc in invoicesSnap.docs) {
+      batch.update(doc.reference, {
+        'isDeleted': true,
+        'deletedAt': FieldValue.serverTimestamp(),
+        'deletedBy': userId,
+      });
+    }
+
     // Update system metrics
     final metricsRef = _firestore.collection('system_metrics').doc('stats_$organizationId');
     batch.set(metricsRef, {
       'totalPatients': FieldValue.increment(-1),
+      'totalInvoices': FieldValue.increment(-invoicesSnap.docs.length),
     }, SetOptions(merge: true));
 
     // Log activity
@@ -107,7 +122,7 @@ class PatientRepository {
       'action': 'PATIENT_DELETED',
       'entityType': 'patient',
       'entityId': patientId,
-      'description': 'Soft-deleted patient $patientName',
+      'description': 'Soft-deleted patient $patientName and ${invoicesSnap.docs.length} associated invoice(s)',
       'organizationId': organizationId,
       'timestamp': FieldValue.serverTimestamp(),
     });
@@ -129,27 +144,46 @@ class PatientRepository {
 
     int patientCount = patientsSnap.docs.length;
     int invoiceCount = invoicesSnap.docs.length;
-    double totalPaidInvoiceRev = 0.0;
+    double totalInvoiceRev = 0.0;
     double totalPayout = 0.0;
 
+    final patientPayoutMap = <String, double>{};
+    final patientDaysMap = <String, int>{};
     for (final doc in patientsSnap.docs) {
       final data = doc.data();
       final isDiscontinued = data['isDiscontinued'] == true || data['status'] == 'discontinued';
       if (!isDiscontinued) {
-        totalPayout += (data['staffPayment'] ?? 0.0).toDouble();
+        totalInvoiceRev += (data['patientAmount'] ?? 0.0).toDouble();
       }
+      patientPayoutMap[doc.id] = (data['staffPayment'] ?? 0.0).toDouble();
+      patientDaysMap[doc.id] = (data['days'] is num ? (data['days'] as num).toInt() : 0);
     }
 
     for (final doc in invoicesSnap.docs) {
       final data = doc.data();
       final isDiscontinued = data['isDiscontinued'] == true;
-      final paymentStatus = (data['paymentStatus'] ?? 'Unpaid').toString().trim().toLowerCase();
-      if (!isDiscontinued && paymentStatus == 'paid') {
-        totalPaidInvoiceRev += (data['grandTotal'] ?? 0.0).toDouble();
+      if (!isDiscontinued) {
+        final patientId = data['patientId'] ?? '';
+        final totalStaffPayment = patientPayoutMap[patientId] ?? (data['staffPayment'] ?? 0.0).toDouble();
+        final pDays = patientDaysMap[patientId] ?? 0;
+        final staffDailyRate = totalStaffPayment > 0 ? (totalStaffPayment / (pDays > 0 ? pDays : 30)) : 0.0;
+        
+        int invoiceDays = 0;
+        if (data['days'] is num) {
+          invoiceDays = (data['days'] as num).toInt();
+        } else if (data['items'] is List && (data['items'] as List).isNotEmpty) {
+          final firstItem = (data['items'] as List).first;
+          if (firstItem is Map && firstItem['quantity'] != null) {
+            invoiceDays = (firstItem['quantity'] as num).toInt();
+          }
+        }
+        if (invoiceDays <= 0) invoiceDays = 1;
+
+        totalPayout += invoiceDays * staffDailyRate;
       }
     }
 
-    double netProfit = totalPaidInvoiceRev - totalPayout;
+    double netProfit = totalInvoiceRev - totalPayout;
 
     final metricsRef = _firestore.collection('system_metrics').doc('stats_$organizationId');
     await metricsRef.set({
@@ -160,7 +194,7 @@ class PatientRepository {
     }, SetOptions(merge: true));
   }
 
-  /// Restore a soft-deleted patient (Admin only, replaces restorePatient Cloud Function)
+  /// Restore a soft-deleted patient and all their associated invoices (Admin only, replaces restorePatient Cloud Function)
   Future<void> restorePatient({
     required String patientId,
     required String patientName,
@@ -177,6 +211,22 @@ class PatientRepository {
       'updatedBy': userId,
     });
 
+    // Restore associated invoices
+    final invoicesSnap = await _firestore
+        .collection('invoices')
+        .where('patientId', isEqualTo: patientId)
+        .get();
+
+    for (final doc in invoicesSnap.docs) {
+      batch.update(doc.reference, {
+        'isDeleted': false,
+        'deletedAt': FieldValue.delete(),
+        'deletedBy': FieldValue.delete(),
+        'updatedAt': FieldValue.serverTimestamp(),
+        'updatedBy': userId,
+      });
+    }
+
     // Log activity
     final activityRef = _firestore.collection('activities').doc();
     batch.set(activityRef, {
@@ -185,7 +235,7 @@ class PatientRepository {
       'action': 'PATIENT_RESTORED',
       'entityType': 'patient',
       'entityId': patientId,
-      'description': 'Restored patient $patientName',
+      'description': 'Restored patient $patientName and associated invoices',
       'organizationId': organizationId,
       'timestamp': FieldValue.serverTimestamp(),
     });

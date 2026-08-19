@@ -1,3 +1,4 @@
+﻿import 'package:flutter/widgets.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import '../../shared/providers/auth_provider.dart';
@@ -18,6 +19,8 @@ final appRouterProvider = Provider<GoRouter>((ref) {
   final userProfile = ref.watch(userProfileProvider);
   final splashCompleted = ref.watch(splashCompletedProvider);
 
+  bool isHandlingSignOut = false;
+
   return GoRouter(
     initialLocation: '/splash',
     redirect: (context, state) {
@@ -34,7 +37,12 @@ final appRouterProvider = Provider<GoRouter>((ref) {
 
       if (authState.hasError || userProfile.hasError) {
         // Sign out to clear bad state and prevent infinite redirect loops
-        ref.read(firebaseAuthProvider).signOut();
+        if (!isHandlingSignOut) {
+          isHandlingSignOut = true;
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            ref.read(firebaseAuthProvider).signOut();
+          });
+        }
         return '/login';
       }
 
@@ -48,7 +56,12 @@ final appRouterProvider = Provider<GoRouter>((ref) {
       if (profile == null) {
         if (userProfile.hasValue) {
           // Profile document doesn't exist in Firestore, sign out
-          ref.read(firebaseAuthProvider).signOut();
+          if (!isHandlingSignOut) {
+            isHandlingSignOut = true;
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              ref.read(firebaseAuthProvider).signOut();
+            });
+          }
           return '/login';
         }
         return '/splash';
@@ -58,7 +71,15 @@ final appRouterProvider = Provider<GoRouter>((ref) {
       // because userProfileProvider is a real-time Firestore stream)
       final status = (profile['status'] ?? 'active').toString().toLowerCase();
       if (status == 'deactivated' || status == 'disabled' || status == 'inactive') {
-        ref.read(firebaseAuthProvider).signOut();
+        if (!isHandlingSignOut) {
+          isHandlingSignOut = true;
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            ref.read(loginErrorMessageProvider.notifier).setMessage(
+              'Your account has been deactivated. Please contact an administrator.',
+            );
+            ref.read(firebaseAuthProvider).signOut();
+          });
+        }
         return '/login';
       }
 

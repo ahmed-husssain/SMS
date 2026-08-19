@@ -17,6 +17,7 @@ class Patient {
   final double patientAmount;
   final double staffPayment;
   final double profit;
+  final int days;
   final String assignedStaffId;
   final String organizationId;
   final String createdBy;
@@ -49,6 +50,7 @@ class Patient {
     required this.patientAmount,
     required this.staffPayment,
     required this.profit,
+    this.days = 0,
     required this.assignedStaffId,
     required this.organizationId,
     required this.createdBy,
@@ -94,6 +96,7 @@ class Patient {
       patientAmount: (data['patientAmount'] ?? 0.0).toDouble(),
       staffPayment: (data['staffPayment'] ?? 0.0).toDouble(),
       profit: (data['profit'] ?? 0.0).toDouble(),
+      days: (data['days'] is num ? (data['days'] as num).toInt() : int.tryParse(data['days']?.toString() ?? '0') ?? 0),
       assignedStaffId: data['assignedStaffId'] ?? '',
       organizationId: data['organizationId'] ?? 'default',
       createdBy: data['createdBy'] ?? '',
@@ -128,6 +131,7 @@ class Patient {
       'patientAmount': patientAmount,
       'staffPayment': staffPayment,
       'profit': profit,
+      'days': days,
       'assignedStaffId': assignedStaffId,
       'organizationId': organizationId,
       'createdBy': createdBy,

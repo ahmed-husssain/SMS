@@ -19,19 +19,35 @@ final systemMetricsProvider = StreamProvider<Map<String, dynamic>>((ref) {
   final invoices = invoicesAsync.value ?? [];
 
   final totalPatients = patients.length;
+  final patientMap = {for (final p in patients) p.patientId: p};
+
   double totalRevenue = 0.0;
   double totalPayout = 0.0;
 
   for (final p in patients) {
     if (!p.isDiscontinued) {
-      totalPayout += p.staffPayment;
+      totalRevenue += p.patientAmount;
     }
   }
 
-  // Only count Paid invoices toward revenue
   for (final inv in invoices) {
-    if (!inv.isDeleted && !inv.isDiscontinued && inv.paymentStatus.trim().toLowerCase() == 'paid') {
-      totalRevenue += inv.grandTotal;
+    if (!inv.isDeleted && !inv.isDiscontinued) {
+      // Staff Expenditure = Invoice Days * Staff Daily Payment
+      final patient = patientMap[inv.patientId];
+      double staffDailyRate = 0.0;
+      if (patient != null && patient.staffPayment > 0) {
+        final pDays = patient.days > 0 ? patient.days : 30;
+        staffDailyRate = patient.staffPayment / pDays;
+      }
+
+      final invoiceDays = inv.days > 0
+          ? inv.days
+          : (inv.items.isNotEmpty && inv.items.first.quantity > 0
+              ? inv.items.first.quantity
+              : (inv.toDate != null && inv.fromDate != null
+                  ? inv.toDate!.difference(inv.fromDate!).inDays
+                  : 1));
+      totalPayout += invoiceDays * staffDailyRate;
     }
   }
 
@@ -70,19 +86,35 @@ final staffMetricsProvider = StreamProvider<Map<String, dynamic>>((ref) {
   final invoices = invoicesAsync.value ?? [];
 
   final totalPatients = patients.length;
+  final patientMap = {for (final p in patients) p.patientId: p};
+
   double totalRevenue = 0.0;
   double totalPayout = 0.0;
 
   for (final p in patients) {
     if (!p.isDiscontinued) {
-      totalPayout += p.staffPayment;
+      totalRevenue += p.patientAmount;
     }
   }
 
-  // Only count Paid invoices toward revenue
   for (final inv in invoices) {
-    if (!inv.isDeleted && !inv.isDiscontinued && inv.paymentStatus.trim().toLowerCase() == 'paid') {
-      totalRevenue += inv.grandTotal;
+    if (!inv.isDeleted && !inv.isDiscontinued) {
+      // Staff Expenditure = Invoice Days * Staff Daily Payment
+      final patient = patientMap[inv.patientId];
+      double staffDailyRate = 0.0;
+      if (patient != null && patient.staffPayment > 0) {
+        final pDays = patient.days > 0 ? patient.days : 30;
+        staffDailyRate = patient.staffPayment / pDays;
+      }
+
+      final invoiceDays = inv.days > 0
+          ? inv.days
+          : (inv.items.isNotEmpty && inv.items.first.quantity > 0
+              ? inv.items.first.quantity
+              : (inv.toDate != null && inv.fromDate != null
+                  ? inv.toDate!.difference(inv.fromDate!).inDays
+                  : 1));
+      totalPayout += invoiceDays * staffDailyRate;
     }
   }
 

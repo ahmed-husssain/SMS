@@ -52,6 +52,7 @@ class Invoice {
   final bool isDiscontinued;
   final DateTime? fromDate;
   final DateTime? toDate;
+  final int days;
   final String? createdByName;
   final String? createdByRole;
   final String? createdByUid;
@@ -77,6 +78,7 @@ class Invoice {
     this.isDiscontinued = false,
     this.fromDate,
     this.toDate,
+    this.days = 0,
     this.createdByName,
     this.createdByRole,
     this.createdByUid,
@@ -91,6 +93,27 @@ class Invoice {
         return DateTime.fromMillisecondsSinceEpoch((val['_seconds'] as int) * 1000);
       }
       return null;
+    }
+
+    int parsedDays = 0;
+    if (data['days'] is num) {
+      parsedDays = (data['days'] as num).toInt();
+    } else if (data['days'] != null) {
+      parsedDays = int.tryParse(data['days'].toString()) ?? 0;
+    }
+    if (parsedDays <= 0 && data['items'] is List && (data['items'] as List).isNotEmpty) {
+      final firstItem = (data['items'] as List).first;
+      if (firstItem is Map && firstItem['quantity'] != null) {
+        parsedDays = (firstItem['quantity'] as num).toInt();
+      }
+    }
+    if (parsedDays <= 0) {
+      final from = parseDate(data['fromDate']);
+      final to = parseDate(data['toDate']);
+      if (from != null && to != null) {
+        final diff = to.difference(from).inDays;
+        if (diff > 0) parsedDays = diff;
+      }
     }
 
     return Invoice(
@@ -116,6 +139,7 @@ class Invoice {
       isDiscontinued: data['isDiscontinued'] ?? false,
       fromDate: parseDate(data['fromDate']),
       toDate: parseDate(data['toDate']),
+      days: parsedDays,
       createdByName: data['createdByName'] as String?,
       createdByRole: data['createdByRole'] as String?,
       createdByUid: data['createdByUid'] as String? ?? data['createdBy'] as String? ?? data['staffId'] as String?,
@@ -143,6 +167,7 @@ class Invoice {
       'isDiscontinued': isDiscontinued,
       'fromDate': fromDate != null ? Timestamp.fromDate(fromDate!) : null,
       'toDate': toDate != null ? Timestamp.fromDate(toDate!) : null,
+      'days': days,
       'createdByName': createdByName,
       'createdByRole': createdByRole,
       'createdByUid': createdByUid ?? createdBy,
@@ -170,6 +195,7 @@ class Invoice {
     bool? isDiscontinued,
     DateTime? fromDate,
     DateTime? toDate,
+    int? days,
     String? createdByName,
     String? createdByRole,
     String? createdByUid,
@@ -195,6 +221,7 @@ class Invoice {
       isDiscontinued: isDiscontinued ?? this.isDiscontinued,
       fromDate: fromDate ?? this.fromDate,
       toDate: toDate ?? this.toDate,
+      days: days ?? this.days,
       createdByName: createdByName ?? this.createdByName,
       createdByRole: createdByRole ?? this.createdByRole,
       createdByUid: createdByUid ?? this.createdByUid,
