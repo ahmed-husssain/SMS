@@ -28,7 +28,7 @@ async function checkAdmin(request) {
       const role = (data.role || "").toLowerCase();
       const username = (data.username || "").toUpperCase();
       logger.info("[checkAdmin] Verifying caller Firestore profile...", { callerUid, role, username });
-      if (role === "admin" || username === "MASTER" || username === "IT") {
+      if (role === "admin") {
         logger.info("[checkAdmin] Caller authorized via Firestore profile document.");
         return;
       }
